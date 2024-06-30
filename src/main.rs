@@ -9,7 +9,7 @@ use esp_hal::{
     clock::ClockControl,
     dma::Dma,
     dma_descriptors,
-    gpio::Io,
+    gpio::{Io, Level, Output},
     peripherals::{Peripherals, SPI3},
     prelude::*,
     spi::{
@@ -37,8 +37,9 @@ async fn main(_spawner: Spawner) {
     let sck = io.pins.gpio4;
     let miso = io.pins.gpio2;
     let mosi = io.pins.gpio3;
-    let cs = io.pins.gpio5;
+    let mut cs = Output::new(io.pins.gpio5, Level::High);
 
+    Timer::after(Duration::from_millis(1000)).await;
     let dma = Dma::new(peripherals.DMA);
     let dma_chan = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
@@ -49,9 +50,61 @@ async fn main(_spawner: Spawner) {
         esp_hal::dma::DmaPriority::Priority0,
     );
 
-    let spi = Spi::new(peripherals.SPI3, 5000000.Hz(), SpiMode::Mode0, &clocks);
+    let spi = Spi::new(peripherals.SPI3, 4000000.Hz(), SpiMode::Mode0, &clocks);
+    let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
     let mut spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
+    esp_println::println!("Performing RW test...");
+    let test_val = 0x25;
+    let mut pass = 0;
+
+    for i in test_val..(test_val + 2) {
+        // write:
+        _ = embedded_hal_async::spi::SpiBus::flush(&mut spi).await;
+        cs.set_low();
+        let mut write_buff = [RC522_MOD_WIDTH_REG, i]; // ADDR, DATA..
+        write_buff[0] = (write_buff[0] << 1) & 0x7E; // idk why but ok
+        let res = embedded_hal_async::spi::SpiBus::write(&mut spi, &write_buff).await;
+        esp_println::println!("write_res: {res:?}");
+        cs.set_high();
+
+        if res.is_ok() {
+            // read:
+            _ = embedded_hal_async::spi::SpiBus::flush(&mut spi).await;
+            cs.set_low();
+            let addr = ((RC522_MOD_WIDTH_REG << 1) & 0x7E) | 0x80;
+            let res = embedded_hal_async::spi::SpiBus::write(&mut spi, &[addr]).await;
+            esp_println::println!("read_write_res: {res:?}");
+            cs.set_high();
+
+            _ = embedded_hal_async::spi::SpiBus::flush(&mut spi).await;
+            cs.set_low();
+            let mut read_buff = [0; 1]; // read size: n = 1
+            let res = embedded_hal_async::spi::SpiBus::read(&mut spi, &mut read_buff).await;
+            esp_println::println!("read_read_res: {res:?}");
+
+            esp_println::println!("RES: {}, expected: {i}", read_buff[0]);
+            cs.set_high();
+            /*
+            if res.is_ok() && read_buff[0] == i {
+
+            }
+            */
+        }
+
+        if pass != 1 {
+            esp_println::println!("ERROR: (pass != 1)");
+        }
+
+        // write(RC522_MOD_WIDTH_REG, i)
+
+        // if not err
+        //  tmp = read(RC522_MOD_WIDTH_REG)
+        //  if not err and tmp == i; then pass = 1
+        //
+        // if pass != 1
+        //  Error!
+    }
     /*
     let send_buf = [0, 1, 2, 3, 4, 5, 6, 7];
     //let mut read_buf = [0; 16];
