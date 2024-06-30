@@ -4,22 +4,24 @@
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use embedded_hal::spi::SpiBus;
 use esp_backtrace as _;
 use esp_hal::{
     clock::ClockControl,
-    dma::*,
+    dma::Dma,
     dma_descriptors,
     gpio::Io,
-    peripherals::Peripherals,
+    peripherals::{Peripherals, SPI3},
     prelude::*,
     spi::{
-        master::{prelude::*, Spi},
-        SpiMode,
+        master::{dma::SpiDma, prelude::*, Spi},
+        FullDuplexMode, SpiMode,
     },
     system::SystemControl,
     timer::timg::TimerGroup,
+    Async,
 };
+
+const RC522_MOD_WIDTH_REG: u8 = 0x24;
 
 #[main]
 async fn main(_spawner: Spawner) {
@@ -37,28 +39,38 @@ async fn main(_spawner: Spawner) {
     let mosi = io.pins.gpio3;
     let cs = io.pins.gpio5;
 
-    /*
     let dma = Dma::new(peripherals.DMA);
     let dma_chan = dma.channel0;
-
-    let (descriptors, rx_descriptors) = dma_descriptors!(32000);
-    */
-    let mut spi = Spi::new(peripherals.SPI2, 100.kHz(), SpiMode::Mode0, &clocks).with_pins(
-        Some(sck),
-        Some(mosi),
-        Some(miso),
-        Some(cs),
+    let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
+    let dma_chan = dma_chan.configure_for_async(
+        false,
+        &mut descriptors,
+        &mut rx_descriptors,
+        esp_hal::dma::DmaPriority::Priority0,
     );
 
-    //let send_buffer = [0, 1, 2, 3, 4, 5, 6, 7];
-    let mut read_buf = [16];
-    loop {
-        let res = spi.read(&mut read_buf);
-        esp_println::println!("read: {res:?}");
-        esp_println::println!("read_buf: {read_buf:?}");
+    let spi = Spi::new(peripherals.SPI3, 5000000.Hz(), SpiMode::Mode0, &clocks);
+    let mut spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
-        //Timer::after(Duration::from_millis(100)).await;
+    /*
+    let send_buf = [0, 1, 2, 3, 4, 5, 6, 7];
+    //let mut read_buf = [0; 16];
+    loop {
+        let mut buffer = [0; 8];
+        esp_println::println!("Sending bytes");
+        let res = embedded_hal_async::spi::SpiBus::transfer(&mut spi, &mut buffer, &send_buf).await;
+        esp_println::println!("res: {res:?}");
+        esp_println::println!("Bytes received: {:?}", buffer);
+        //let res = spi.read(&mut read_buf);
+        //spi.read
+        //_ = embedded_hal_async::spi::SpiBus::write(&mut spi, &[]).await;
+        //let res = embedded_hal_async::spi::SpiBus::read(&mut spi, &mut read_buf).await;
+        //esp_println::println!("read: {res:?}");
+        //esp_println::println!("read_buf: {read_buf:?}");
+
+        Timer::after(Duration::from_millis(100)).await;
     }
+    */
     /*
     loop {
         log::info!("Hello world!");
