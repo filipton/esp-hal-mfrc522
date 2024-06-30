@@ -22,7 +22,6 @@ use esp_hal::{
     timer::timg::TimerGroup,
     Async,
 };
-use esp_println::println;
 
 mod consts;
 
@@ -52,7 +51,7 @@ async fn main(_spawner: Spawner) {
         esp_hal::dma::DmaPriority::Priority0,
     );
 
-    let spi = Spi::new(peripherals.SPI3, 4000000.Hz(), SpiMode::Mode0, &clocks);
+    let spi = Spi::new(peripherals.SPI3, 4.MHz(), SpiMode::Mode0, &clocks);
     let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
     let mut spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
@@ -132,124 +131,16 @@ async fn main(_spawner: Spawner) {
     )
     .await;
 
-    for i in 0..0xFF {
+    for _ in 0..0xFF {
         let n = read_register(&mut spi, &mut cs, PCDRegister::FIFOLevelReg)
             .await
             .unwrap();
 
-        esp_println::println!("N: {n}");
-    }
-
-    /*
-      byte        n;
-    for(uint8_t i   = 0; i < 0xFF; i++) {
-      // The datasheet does not specify exact completion condition except
-      // that FIFO buffer should contain 64 bytes.
-      // While selftest is initiated by CalcCRC command
-      // it behaves differently from normal CRC computation,
-      // so one can't reliably use DivIrqReg to check for completion.
-      // It is reported that some devices does not trigger CRCIRq flag
-      // during selftest.
-      n = _driver.PCD_ReadRegister(PCD_Register::FIFOLevelReg);
-      if(n >= 64) {
-        break;
-      }
-    }
-    _driver.PCD_WriteRegister(PCD_Register::CommandReg, PCD_Command::PCD_Idle);
-      */
-
-    /*
-    loop {
-        _ = write_register(&mut spi, &mut cs, PCDRegister::TxModeReg, 0x00).await;
-        _ = write_register(&mut spi, &mut cs, PCDRegister::RxModeReg, 0x00).await;
-        _ = write_register(&mut spi, &mut cs, PCDRegister::ModWidthReg, 0x26).await;
-
-        Timer::after(Duration::from_millis(30)).await;
-    }
-    */
-
-    /*
-        let test_val = 0x25;
-        let mut pass = 0;
-
-        let mut read_buff = [0; 1]; // read size: n = 1
-        for i in test_val..(test_val + 2) {
-            let res = write_register(&mut spi, &mut cs, RC522_MOD_WIDTH_REG, i).await;
-
-            if res.is_ok() {
-                // read:
-                cs.set_low();
-                let res = embedded_hal_async::spi::SpiBus::transfer(
-                    &mut spi,
-                    &mut read_buff,
-                    &[(RC522_MOD_WIDTH_REG) | 0x80],
-                )
-                .await;
-                esp_println::println!("read_write_res: {res:?}");
-
-                let res =
-                    embedded_hal_async::spi::SpiBus::transfer(&mut spi, &mut read_buff, &[0]).await;
-                esp_println::println!("read_read_res: {res:?}");
-
-                esp_println::println!("RES: {}, expected: {i}", read_buff[0]);
-                cs.set_high();
-                /*
-                if res.is_ok() && read_buff[0] == i {
-
-                }
-                */
-            }
-
-            if pass != 1 {
-                esp_println::println!("ERROR: (pass != 1)");
-            }
-
-            // write(RC522_MOD_WIDTH_REG, i)
-
-            // if not err
-            //  tmp = read(RC522_MOD_WIDTH_REG)
-            //  if not err and tmp == i; then pass = 1
-            //
-            // if pass != 1
-            //  Error!
+        if n >= 64 {
+            break;
         }
-    */
-
-    /*
-    let send_buf = [0, 1, 2, 3, 4, 5, 6, 7];
-    //let mut read_buf = [0; 16];
-    loop {
-        let mut buffer = [0; 8];
-        esp_println::println!("Sending bytes");
-        let res = embedded_hal_async::spi::SpiBus::transfer(&mut spi, &mut buffer, &send_buf).await;
-        esp_println::println!("res: {res:?}");
-        esp_println::println!("Bytes received: {:?}", buffer);
-        //let res = spi.read(&mut read_buf);
-        //spi.read
-        //_ = embedded_hal_async::spi::SpiBus::write(&mut spi, &[]).await;
-        //let res = embedded_hal_async::spi::SpiBus::read(&mut spi, &mut read_buf).await;
-        //esp_println::println!("read: {res:?}");
-        //esp_println::println!("read_buf: {read_buf:?}");
-
-        Timer::after(Duration::from_millis(100)).await;
     }
-    */
-    /*
-    loop {
-        log::info!("Hello world!");
-        Timer::after(Duration::from_millis(500)).await;
-    }
-    */
 }
-
-/*
-        impl<'d, T, C, M> embedded_hal_async::spi::SpiBus for SpiDma<'d, T, C, M, crate::Async>
-        where
-            T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
-            C: ChannelTypes,
-            C::P: SpiPeripheral,
-            M: IsFullDuplex,
-*/
 
 async fn write_register(
     spi: &mut impl embedded_hal_async::spi::SpiBus,
@@ -260,11 +151,9 @@ async fn write_register(
     let mut read_buff = [0; 1];
 
     _ = cs.set_low();
-    let res = spi.transfer(&mut read_buff, &[register << 1]).await;
-    //esp_println::println!("write_addr_res: {res:?}");
+    _ = spi.transfer(&mut read_buff, &[register << 1]).await;
 
-    let res = spi.transfer(&mut read_buff, &[value]).await;
-    //esp_println::println!("write_val_res: {res:?}");
+    _ = spi.transfer(&mut read_buff, &[value]).await;
     _ = cs.set_high();
 
     Ok(())
@@ -280,12 +169,10 @@ async fn write_registers(
     let mut read_buff = [0; 1];
 
     _ = cs.set_low();
-    let res = spi.transfer(&mut read_buff, &[register << 1]).await;
-    //esp_println::println!("write_addr_res: {res:?}");
+    _ = spi.transfer(&mut read_buff, &[register << 1]).await;
 
     for i in 0..count {
-        let res = spi.transfer(&mut read_buff, &[values[i]]).await;
-        //esp_println::println!("write_val_res: {res:?}");
+        _ = spi.transfer(&mut read_buff, &[values[i]]).await;
     }
 
     _ = cs.set_high();
@@ -293,6 +180,7 @@ async fn write_registers(
     Ok(())
 }
 
+// TODO: use ? to propagate errors up
 async fn read_register(
     spi: &mut impl embedded_hal_async::spi::SpiBus,
     cs: &mut impl OutputPin,
@@ -301,13 +189,11 @@ async fn read_register(
     let mut read_buff = [0; 1];
 
     _ = cs.set_low();
-    let res = spi
+    _ = spi
         .transfer(&mut read_buff, &[(register << 1) | 0x80])
         .await;
-    //esp_println::println!("read_w_addr_res: {res:?}");
 
-    let res = spi.transfer(&mut read_buff, &[0]).await;
-    //esp_println::println!("read_r_val_res: {res:?}");
+    _ = spi.transfer(&mut read_buff, &[0]).await;
     _ = cs.set_high();
 
     Ok(read_buff[0])
