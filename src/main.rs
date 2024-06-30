@@ -56,7 +56,7 @@ async fn main(_spawner: Spawner) {
         esp_hal::dma::DmaPriority::Priority0,
     );
 
-    let spi = Spi::new(peripherals.SPI3, 4.MHz(), SpiMode::Mode0, &clocks);
+    let spi = Spi::new(peripherals.SPI3, 5.MHz(), SpiMode::Mode0, &clocks);
     let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
     let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
@@ -67,8 +67,9 @@ async fn main(_spawner: Spawner) {
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
-            let mut dsa = 0;
-            let res = mfrc522.picc_select(&mut dsa, 0).await;
+            //let mut dsa = 0;
+            //let res = mfrc522.picc_select(&mut dsa, 0).await;
+            let res = mfrc522.picc_halta().await;
             info!("CARD IS PRESENT: {res:?}");
         }
 
@@ -219,6 +220,29 @@ where
         self.picc_request_a(&mut buffer_atqa, &mut buffer_size)
             .await?;
         Ok(true)
+    }
+
+    pub async fn picc_halta(&mut self) -> Result<(), ()> {
+        let mut buff = [0; 4];
+        buff[0] = PICCCommand::PICC_CMD_HLTA;
+        buff[1] = 0;
+
+        self.pcd_calc_crc(&buff.clone(), 2, &mut buff[2..]).await?;
+        let mut void = [0; 16];
+        let mut len_void = 0;
+        let mut valid_bits_void = 0;
+        self.pcd_transceive_data(
+            &buff,
+            4,
+            &mut void,
+            &mut len_void,
+            &mut valid_bits_void,
+            0,
+            false,
+        )
+        .await?;
+
+        Ok(())
     }
 
     pub async fn picc_select(&mut self, uid: &mut u128, valid_bits: u8) -> Result<(), u8> {
@@ -526,15 +550,18 @@ where
         for i in 0..2000 {
             if i == 2000 {
                 // timeout??
+                //trace!("timeout1 {back_len}");
                 return Err(());
             }
 
             let n = self.read_reg(PCDRegister::ComIrqReg).await?;
+            //trace!("{n}");
             if n & wait_irq != 0 {
                 break;
             }
 
             if n & 0x01 != 0 {
+                //trace!("timeout {back_len}");
                 // timeout??
                 return Err(());
             }
