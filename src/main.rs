@@ -106,6 +106,9 @@ async fn main(_spawner: Spawner) {
         .unwrap();
 
     esp_println::println!("PCD ver: {ver:?}");
+
+    // SELFTEST CODE
+    /*
     esp_println::println!("PCD selftest");
 
     _ = write_register(&mut spi, &mut cs, PCDRegister::FIFOLevelReg, 0x80).await;
@@ -140,6 +143,22 @@ async fn main(_spawner: Spawner) {
             break;
         }
     }
+
+    _ = write_register(&mut spi, &mut cs, PCDRegister::CommandReg, PCDCommand::Idle).await;
+
+    let mut res = [0; 64];
+    _ = read_registers(&mut spi, &mut cs, PCDRegister::FIFODataReg, 64, &mut res, 0).await;
+    _ = write_register(&mut spi, &mut cs, PCDRegister::AutoTestReg, 0x40 & 0x00).await;
+
+    for i in 0..64 {
+        if i % 8 == 0 {
+            esp_println::print!("\n");
+        }
+
+        esp_println::print!("{:#04x} ", res[i]);
+    }
+    esp_println::print!("\n");
+    */
 }
 
 async fn write_register(
@@ -197,4 +216,96 @@ async fn read_register(
     _ = cs.set_high();
 
     Ok(read_buff[0])
+}
+
+async fn read_registers(
+    spi: &mut impl embedded_hal_async::spi::SpiBus,
+    cs: &mut impl OutputPin,
+    register: u8,
+    count: usize,
+    buff: &mut [u8],
+    rx_align: u8,
+) -> Result<(), ()> {
+    if count == 0 {
+        return Ok(());
+    }
+
+    let addr = 0x80 | (register << 1);
+    let mut index = 0;
+    let mut read_buff = [0; 1];
+
+    _ = cs.set_low();
+    _ = spi.transfer(&mut read_buff, &[addr]).await;
+    if rx_align > 0 {
+        let mask = (0xFF << rx_align) & 0xFF;
+        _ = spi.transfer(&mut read_buff, &[addr]).await;
+        let val = read_buff[0];
+
+        buff[0] = (buff[0] & !mask) | (val & mask);
+        index += 1;
+    }
+
+    while index < count - 1 {
+        _ = spi.transfer(&mut read_buff, &[addr]).await;
+        buff[index] = read_buff[0];
+        index += 1;
+    }
+
+    _ = spi.transfer(&mut read_buff, &[0]).await;
+    buff[index] = read_buff[0];
+
+    _ = cs.set_high();
+    Ok(())
+}
+
+async fn clear_register_bit_mask(
+    spi: &mut impl embedded_hal_async::spi::SpiBus,
+    cs: &mut impl OutputPin,
+    register: u8,
+    mask: u8,
+) -> Result<(), ()> {
+    let tmp = read_register(spi, cs, register).await?;
+    write_register(spi, cs, register, tmp & (!mask)).await?;
+
+    Ok(())
+}
+
+async fn set_register_bit_mask(
+    spi: &mut impl embedded_hal_async::spi::SpiBus,
+    cs: &mut impl OutputPin,
+    register: u8,
+    mask: u8,
+) -> Result<(), ()> {
+    let tmp = read_register(spi, cs, register).await?;
+    write_register(spi, cs, register, tmp | mask).await?;
+
+    Ok(())
+}
+
+async fn calc_crc(
+    spi: &mut impl embedded_hal_async::spi::SpiBus,
+    cs: &mut impl OutputPin,
+    data: &[u8],
+    length: u8,
+    res: &mut [u8],
+) -> Result<(), ()> {
+    write_register(spi, cs, PCDRegister::CommandReg, PCDCommand::Idle).await?;
+    write_register(spi, cs, PCDRegister::DivIrqReg, 0x04).await?;
+    write_register(spi, cs, PCDRegister::FIFOLevelReg, 0x80).await?;
+    write_registers(spi, cs, PCDRegister::FIFODataReg, length as usize, data).await?;
+    write_register(spi, cs, PCDRegister::CommandReg, PCDCommand::CalcCRC).await?;
+
+    for i in (0..5000).rev() {
+        let n = read_register(spi, cs, PCDRegister::DivIrqReg).await?;
+        if n & 0x04 != 0 {
+            write_register(spi, cs, PCDRegister::CommandReg, PCDCommand::Idle).await?;
+
+            res[0] = read_register(spi, cs, PCDRegister::CRCResultRegL).await?;
+            res[1] = read_register(spi, cs, PCDRegister::CRCResultRegH).await?;
+            return Ok(());
+        }
+    }
+
+    // timeout?
+    Err(())
 }
