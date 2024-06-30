@@ -2,6 +2,7 @@
 
 pub struct PCDRegister;
 pub struct PCDCommand;
+pub struct PICCCommand;
 
 #[allow(dead_code, non_upper_case_globals)]
 impl PCDRegister {
@@ -90,4 +91,30 @@ impl PCDCommand {
     pub const Transceive: u8 = 0x0C; // transmits data from FIFO buffer to antenna and automatically activates the receiver after transmission
     pub const MFAuthent: u8 = 0x0E; // performs the MIFARE standard authentication as a reader
     pub const SoftReset: u8 = 0x0F; // resets the MFRC522
+}
+
+#[allow(dead_code, non_upper_case_globals)]
+impl PICCCommand {
+    pub const PICC_CMD_REQA: u8 = 0x26; // REQuest command, Type A. Invites PICCs in state IDLE to go to READY and prepare for anticollision or selection. 7 bit frame.
+    pub const PICC_CMD_WUPA: u8 = 0x52; // Wake-UP command, Type A. Invites PICCs in state IDLE and HALT to go to READY(*) and prepare for anticollision or selection. 7 bit frame.
+    pub const PICC_CMD_CT: u8 = 0x88; // Cascade Tag. Not really a command, but used during anti collision.
+    pub const PICC_CMD_SEL_CL1: u8 = 0x93; // Anti collision/Select, Cascade Level 1
+    pub const PICC_CMD_SEL_CL2: u8 = 0x95; // Anti collision/Select, Cascade Level 2
+    pub const PICC_CMD_SEL_CL3: u8 = 0x97; // Anti collision/Select, Cascade Level 3
+    pub const PICC_CMD_HLTA: u8 = 0x50; // HaLT command, Type A. Instructs an ACTIVE PICC to go to state HALT.
+    pub const PICC_CMD_RATS: u8 = 0xE0; // Request command for Answer To Reset.
+                                        // The commands used for MIFARE Classic (from http://www.mouser.com/ds/2/302/MF1S503x-89574.pdf, Section 9)
+                                        // Use PCD_MFAuthent to authenticate access to a sector, then use these commands to read/write/modify the blocks on the sector.
+                                        // The read/write commands can also be used for MIFARE Ultralight.
+    pub const PICC_CMD_MF_AUTH_KEY_A: u8 = 0x60; // Perform authentication with Key A
+    pub const PICC_CMD_MF_AUTH_KEY_B: u8 = 0x61; // Perform authentication with Key B
+    pub const PICC_CMD_MF_READ: u8 = 0x30; // Reads one 16 byte block from the authenticated sector of the PICC. Also used for MIFARE Ultralight.
+    pub const PICC_CMD_MF_WRITE: u8 = 0xA0; // Writes one 16 byte block to the authenticated sector of the PICC. Called "COMPATIBILITY WRITE" for MIFARE Ultralight.
+    pub const PICC_CMD_MF_DECREMENT: u8 = 0xC0; // Decrements the contents of a block and stores the result in the internal data register.
+    pub const PICC_CMD_MF_INCREMENT: u8 = 0xC1; // Increments the contents of a block and stores the result in the internal data register.
+    pub const PICC_CMD_MF_RESTORE: u8 = 0xC2; // Reads the contents of a block into the internal data register.
+    pub const PICC_CMD_MF_TRANSFER: u8 = 0xB0; // Writes the contents of the internal data register to a block.
+                                               // The commands used for MIFARE Ultralight (from http://www.nxp.com/documents/data_sheet/MF0ICU1.pdf, Section 8.6)
+                                               // The PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE Ultralight.
+    pub const PICC_CMD_UL_WRITE: u8 = 0xA2; // Writes one 4 byte page to the PICC.
 }
