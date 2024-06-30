@@ -12,7 +12,7 @@ use esp_hal::{
     dma::Dma,
     dma_descriptors,
     gpio::{Io, Level, Output},
-    peripherals::{Peripherals, SPI3},
+    peripherals::{Peripherals, DMA, SPI3},
     prelude::*,
     spi::{
         master::{dma::SpiDma, prelude::*, Spi},
@@ -22,6 +22,8 @@ use esp_hal::{
     timer::timg::TimerGroup,
     Async,
 };
+use heapless::String;
+use log::{debug, info, trace};
 
 mod consts;
 
@@ -34,6 +36,7 @@ async fn main(_spawner: Spawner) {
 
     let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
     esp_hal_embassy::init(&clocks, timg0);
+    log::set_max_level(log::LevelFilter::Trace);
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
     let sck = io.pins.gpio4;
@@ -57,10 +60,14 @@ async fn main(_spawner: Spawner) {
 
     let mut mfrc522 = MFRC522::new(spi, cs);
     _ = mfrc522.pcd_init().await;
-    esp_println::println!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
+    _ = mfrc522.pcd_selftest().await;
+    debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
 
     loop {
-        esp_println::println!("res: {:?}", mfrc522.picc_is_new_card_present().await);
+        if mfrc522.picc_is_new_card_present().await.is_ok() {
+            info!("CARD IS PRESENT");
+        }
+
         Timer::after(Duration::from_millis(20)).await;
     }
 }
@@ -375,6 +382,8 @@ where
     /// Now it prints data to console, TODO: change this
     /// Always returns false (for now)
     pub async fn pcd_selftest(&mut self) -> Result<bool, ()> {
+        debug!("Running PCD_Selftest!\n");
+
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
         self.write_reg_buff(PCDRegister::FIFODataReg, 25, &[0; 25])
             .await?;
@@ -402,15 +411,18 @@ where
         self.write_reg(PCDRegister::AutoTestReg, 0x40 & 0x00)
             .await?;
 
+        let mut str: String<128> = String::new();
         for i in 0..64 {
-            if i % 8 == 0 {
-                esp_println::print!("\n");
+            if i % 8 == 0 && str.len() != 0 {
+                debug!("{}", str);
+                str.clear();
             }
 
-            esp_println::print!("{:#04x} ", res[i]);
+            _ = core::fmt::write(&mut str, format_args!("{:#04x} ", res[i]));
         }
-        esp_println::print!("\n");
+        debug!("{}", str);
 
+        debug!("PCD_Selftest Done!\n");
         self.pcd_init().await?;
         Ok(false)
     }
