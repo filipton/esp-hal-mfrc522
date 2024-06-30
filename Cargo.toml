@@ -6,13 +6,16 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+embassy-executor = { version = "0.5.0", features = ["arch-riscv32"] }
+embassy-time = "0.3.1"
 esp-backtrace = { version = "0.12.0", features = [
     "esp32s3",
     "exception-handler",
     "panic-handler",
     "println",
 ] }
-esp-hal = { version = "0.18.0", features = [ "esp32s3" ] }
+esp-hal = { version = "0.18.0", features = [ "esp32s3", "async" ] }
+esp-hal-embassy = { version = "0.1.0", features = ["esp32s3", "time-timg0", "integrated-timers"] }
 esp-println = { version = "0.9.1", features = ["esp32s3", "log"] }
 log = { version = "0.4.21" }
 [profile.dev]
