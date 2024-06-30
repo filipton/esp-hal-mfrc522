@@ -58,29 +58,35 @@ async fn main(_spawner: Spawner) {
     let test_val = 0x25;
     let mut pass = 0;
 
+    let mut read_buff = [0; 1]; // read size: n = 1
     for i in test_val..(test_val + 2) {
         // write:
-        _ = embedded_hal_async::spi::SpiBus::flush(&mut spi).await;
         cs.set_low();
-        let mut write_buff = [RC522_MOD_WIDTH_REG, i]; // ADDR, DATA..
-        write_buff[0] = (write_buff[0] << 1) & 0x7E; // idk why but ok
-        let res = embedded_hal_async::spi::SpiBus::write(&mut spi, &write_buff).await;
-        esp_println::println!("write_res: {res:?}");
+        let res = embedded_hal_async::spi::SpiBus::transfer(
+            &mut spi,
+            &mut read_buff,
+            &[RC522_MOD_WIDTH_REG],
+        )
+        .await;
+        esp_println::println!("write_res1: {res:?}");
+
+        let res = embedded_hal_async::spi::SpiBus::transfer(&mut spi, &mut read_buff, &[i]).await;
+        esp_println::println!("write_res2: {res:?}");
         cs.set_high();
 
         if res.is_ok() {
             // read:
-            _ = embedded_hal_async::spi::SpiBus::flush(&mut spi).await;
             cs.set_low();
-            let addr = ((RC522_MOD_WIDTH_REG << 1) & 0x7E) | 0x80;
-            let res = embedded_hal_async::spi::SpiBus::write(&mut spi, &[addr]).await;
+            let res = embedded_hal_async::spi::SpiBus::transfer(
+                &mut spi,
+                &mut read_buff,
+                &[(RC522_MOD_WIDTH_REG) | 0x80],
+            )
+            .await;
             esp_println::println!("read_write_res: {res:?}");
-            cs.set_high();
 
-            _ = embedded_hal_async::spi::SpiBus::flush(&mut spi).await;
-            cs.set_low();
-            let mut read_buff = [0; 1]; // read size: n = 1
-            let res = embedded_hal_async::spi::SpiBus::read(&mut spi, &mut read_buff).await;
+            let res =
+                embedded_hal_async::spi::SpiBus::transfer(&mut spi, &mut read_buff, &[0]).await;
             esp_println::println!("read_read_res: {res:?}");
 
             esp_println::println!("RES: {}, expected: {i}", read_buff[0]);
@@ -105,6 +111,7 @@ async fn main(_spawner: Spawner) {
         // if pass != 1
         //  Error!
     }
+
     /*
     let send_buf = [0, 1, 2, 3, 4, 5, 6, 7];
     //let mut read_buf = [0; 16];
