@@ -2,6 +2,8 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+use core::mem::size_of;
+
 use consts::{PCDCommand, PCDRegister, PICCCommand};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -65,7 +67,9 @@ async fn main(_spawner: Spawner) {
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
-            info!("CARD IS PRESENT");
+            let mut dsa = 0;
+            let res = mfrc522.picc_select(&mut dsa, 0).await;
+            info!("CARD IS PRESENT: {res:?}");
         }
 
         Timer::after(Duration::from_millis(20)).await;
@@ -217,6 +221,213 @@ where
         Ok(true)
     }
 
+    pub async fn picc_select(&mut self, uid: &mut u128, valid_bits: u8) -> Result<(), u8> {
+        let mut uid_complete = false;
+        let mut select_done = false;
+        let mut use_casdcade_tag = false;
+        let mut cascade_level = 1u8;
+        let mut count = 0u8;
+        let mut check_bit = 0u8;
+        let mut index = 0u8;
+        let mut uid_index = 0u8;
+        let mut current_level_known_bits = 0i8;
+        let mut buff = [0u8; 9];
+        let mut buffer_used = 0u8;
+        let mut rx_align = 0u8;
+        let mut tx_last_bits = 0u8;
+        let mut response_buffer = [0u8; 9]; // max 9 length
+        let mut response_length = 0u8;
+
+        if valid_bits > 80 {
+            return Err(0);
+        }
+
+        self.pcd_clear_register_bit_mask(PCDRegister::CollReg, 0x80)
+            .await
+            .map_err(|_| 1)?;
+
+        while !uid_complete {
+            match cascade_level {
+                1 => {
+                    buff[0] = PICCCommand::PICC_CMD_SEL_CL1;
+                    uid_index = 0;
+
+                    // this first 4 is uid_size, for now its constant 4
+                    use_casdcade_tag = valid_bits != 0 && (4 > 4);
+                }
+                2 => {
+                    buff[0] = PICCCommand::PICC_CMD_SEL_CL2;
+                    uid_index = 3;
+
+                    // this first 4 is uid_size, for now its constant 4
+                    use_casdcade_tag = valid_bits != 0 && (4 > 7);
+                }
+                3 => {
+                    buff[0] = PICCCommand::PICC_CMD_SEL_CL3;
+                    uid_index = 6;
+                    use_casdcade_tag = false;
+                }
+                _ => {
+                    return Err(2);
+                }
+            }
+
+            current_level_known_bits = valid_bits as i8 - (8i8 * uid_index as i8);
+            if current_level_known_bits < 0 {
+                current_level_known_bits = 0;
+            }
+
+            index = 2;
+            if use_casdcade_tag {
+                buff[index as usize] = PICCCommand::PICC_CMD_CT;
+                index += 1;
+            }
+
+            // TODO: copy uid bytes
+            /*
+            let bytes_to_copy = current_level_known_bits / 8
+                + (if current_level_known_bits % 8 != 0 {
+                    1
+                } else {
+                    0
+                });
+
+            if bytes_to_copy != 0 {
+                let mut max_bytes = if use_casdcade_tag { 3 } else { 4 };
+                if bytes_to_copy > max_bytes {
+                    bytes_to_copy = max_bytes;
+                }
+
+                for count in 0..bytes_to_copy {
+                    //buf[index] = //copy uid bytes
+                    index += 1;
+                }
+            }
+            */
+
+            if use_casdcade_tag {
+                current_level_known_bits += 8;
+            }
+
+            while !select_done {
+                if current_level_known_bits >= 32 {
+                    buff[1] = 0x70;
+                    buff[6] = buff[2] ^ buff[3] ^ buff[4] ^ buff[5];
+
+                    self.pcd_calc_crc(&buff.clone(), 7, &mut buff[7..])
+                        .await
+                        .map_err(|_| 4)?;
+
+                    tx_last_bits = 0;
+                    buffer_used = 9;
+                    response_length = 3;
+                    response_buffer[..3].copy_from_slice(&buff[6..]);
+                } else {
+                    tx_last_bits = (current_level_known_bits % 8) as u8;
+                    count = (current_level_known_bits / 8) as u8;
+                    index = 2 + count;
+                    buff[1] = (index << 4) + tx_last_bits;
+                    buffer_used = index + (if tx_last_bits != 0 { 1 } else { 0 });
+
+                    response_length = 9 - index;
+                    response_buffer[0..response_length as usize]
+                        .copy_from_slice(&buff[index as usize..]);
+                }
+
+                rx_align = tx_last_bits;
+                self.write_reg(PCDRegister::BitFramingReg, (rx_align << 4) + tx_last_bits)
+                    .await
+                    .map_err(|_| 5)?;
+
+                let res = self
+                    .pcd_transceive_data(
+                        &buff,
+                        buffer_used,
+                        &mut response_buffer,
+                        &mut response_length,
+                        &mut tx_last_bits,
+                        rx_align,
+                        false,
+                    )
+                    .await
+                    .map_err(|_| 6)?;
+
+                if res {
+                    // collision
+                    let value_of_coll_reg =
+                        self.read_reg(PCDRegister::CollReg).await.map_err(|_| 7)?;
+                    if value_of_coll_reg & 0x20 != 0 {
+                        return Err(8);
+                    }
+
+                    let mut collision_pos = value_of_coll_reg & 0x1F;
+                    if collision_pos == 0 {
+                        collision_pos = 32;
+                    }
+
+                    if collision_pos as i8 <= current_level_known_bits {
+                        return Err(9);
+                    }
+
+                    current_level_known_bits = collision_pos as i8;
+                    count = (current_level_known_bits % 8) as u8;
+                    check_bit = ((current_level_known_bits - 1) % 8) as u8;
+                    index =
+                        1 + (current_level_known_bits / 8) as u8 + (if count != 0 { 1 } else { 0 });
+
+                    buff[index as usize] |= 1 << check_bit;
+                } else {
+                    if current_level_known_bits >= 32 {
+                        select_done = true;
+                    } else {
+                        current_level_known_bits = 32;
+                    }
+                }
+            }
+
+            index = if buff[2] == PICCCommand::PICC_CMD_CT {
+                3
+            } else {
+                2
+            };
+
+            let bytes_to_copy = if buff[2] == PICCCommand::PICC_CMD_CT {
+                3
+            } else {
+                4
+            };
+
+            // TODO: construct u128 from this or own UID struct
+            for i in 0..bytes_to_copy {
+                debug!("{i}: {}", buff[index as usize]);
+                index += 1;
+            }
+
+            trace!("response_length: {response_length}, tx_last_bits: {tx_last_bits}");
+            if response_length != 3 || tx_last_bits != 0 {
+                return Err(10);
+            }
+
+            self.pcd_calc_crc(&response_buffer, 1, &mut buff[2..])
+                .await
+                .map_err(|_| 11)?;
+
+            if (buff[2] != response_buffer[1]) || (buff[3] != response_buffer[3]) {
+                return Err(12);
+            }
+
+            if response_buffer[0] & 0x04 != 0 {
+                cascade_level += 1;
+            } else {
+                uid_complete = true;
+                debug!("SAK: {}", response_buffer[0]);
+            }
+        }
+
+        debug!("UID_SIZE: {}", 3 * cascade_level + 1);
+        Ok(())
+    }
+
     pub async fn picc_request_a(
         &mut self,
         buffer_atqa: &mut [u8],
@@ -266,7 +477,7 @@ where
         valid_bits: &mut u8,
         rx_align: u8,
         check_crc: bool,
-    ) -> Result<(), ()> {
+    ) -> Result<bool, ()> {
         let wait_irq = 0x30;
         self.pcd_communicate_with_picc(
             PCDCommand::Transceive,
@@ -293,7 +504,7 @@ where
         valid_bits: &mut u8,
         rx_align: u8,
         check_crc: bool,
-    ) -> Result<(), ()> {
+    ) -> Result<bool, ()> {
         let tx_last_bits = *valid_bits;
         let bit_framing = (rx_align << 4) + tx_last_bits;
 
@@ -352,8 +563,8 @@ where
         }
 
         if error_reg_value & 0x08 != 0 {
-            // collision?
-            return Err(());
+            // collision - so true
+            return Ok(true);
         }
 
         if *back_len != 0 && check_crc {
@@ -376,7 +587,7 @@ where
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     /// Now it prints data to console, TODO: change this
