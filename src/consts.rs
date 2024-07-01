@@ -119,6 +119,49 @@ impl PICCCommand {
     pub const PICC_CMD_UL_WRITE: u8 = 0xA2; // Writes one 4 byte page to the PICC.
 }
 
+/*
+#[allow(dead_code, non_upper_case_globals)]
+impl PCDVersion {
+    pub const Version_Counterfeit: u8 = 0x12;
+    pub const Version_FM17522: u8 = 0x88;
+    pub const Version_FM17522_1: u8 = 0xb2;
+    pub const Version_FM17522E: u8 = 0x89;
+    pub const Version_0_0: u8 = 0x90;
+    pub const Version_1_0: u8 = 0x91;
+    pub const Version_2_0: u8 = 0x92;
+    pub const Version_Unknown: u8 = 0xff;
+}
+*/
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum PCDVersion {
+    Counterfeit = 0x12,
+    FM17522 = 0x88,
+    FM17522_1 = 0xb2,
+    FM17522E = 0x89,
+    Version0_0 = 0x90,
+    Version1_0 = 0x91,
+    Version2_0 = 0x92,
+    VersionUnknown = 0xff,
+}
+
+#[allow(dead_code)]
+impl PCDVersion {
+    pub fn from_byte(byte: u8) -> Self {
+        match byte {
+            0x12 => PCDVersion::Counterfeit,
+            0x88 => PCDVersion::FM17522,
+            0xb2 => PCDVersion::FM17522_1,
+            0x89 => PCDVersion::FM17522E,
+            0x90 => PCDVersion::Version0_0,
+            0x91 => PCDVersion::Version1_0,
+            0x92 => PCDVersion::Version2_0,
+            _ => PCDVersion::VersionUnknown,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PCDErrorCode {
     /// Error in communication

@@ -2,7 +2,7 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
-use consts::{PCDCommand, PCDErrorCode, PCDRegister, PICCCommand};
+use consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, PICCCommand};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::OutputPin;
@@ -68,7 +68,7 @@ async fn main(_spawner: Spawner) {
 
     loop {
         info!("main loop");
-        Timer::after(Duration::from_millis(5000)).await;
+        Timer::after(Duration::from_millis(15000)).await;
     }
 }
 
@@ -191,23 +191,75 @@ where
         Ok(())
     }
 
-    pub async fn pcd_get_version(&mut self) -> Result<u8, PCDErrorCode> {
-        self.read_reg(PCDRegister::VersionReg).await
+    pub async fn pcd_antenna_off(&mut self) -> Result<(), PCDErrorCode> {
+        self.pcd_clear_register_bit_mask(PCDRegister::TxControlReg, 0x03)
+            .await
     }
 
-    /*
+    pub async fn pcd_get_antenna_gain(&mut self) -> Result<u8, PCDErrorCode> {
+        let res = self.read_reg(PCDRegister::RFCfgReg).await?;
+        Ok(res & (0x07 << 4))
+    }
+
+    pub async fn pcd_set_antenna_gain(&mut self, mask: u8) -> Result<(), PCDErrorCode> {
+        if self.pcd_get_antenna_gain().await? != mask {
+            self.pcd_clear_register_bit_mask(PCDRegister::RFCfgReg, 0x07 << 4)
+                .await?;
+
+            self.pcd_set_register_bit_mask(PCDRegister::RFCfgReg, mask & (0x07 << 4))
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn pcd_get_version(&mut self) -> Result<PCDVersion, PCDErrorCode> {
+        Ok(PCDVersion::from_byte(
+            self.read_reg(PCDRegister::VersionReg).await?,
+        ))
+    }
+
+    pub async fn pcd_soft_power_down(&mut self) -> Result<(), PCDErrorCode> {
+        let mut val = self.read_reg(PCDRegister::CommandReg).await?;
+        val |= 1 << 4;
+        self.write_reg(PCDRegister::CommandReg, val).await?;
+
+        Ok(())
+    }
+
+    pub async fn pcd_soft_power_up(&mut self) -> Result<(), PCDErrorCode> {
+        let mut val = self.read_reg(PCDRegister::CommandReg).await?;
+        val &= !(1 << 4);
+        self.write_reg(PCDRegister::CommandReg, val).await?;
+
+        let now = Instant::now();
+        while now.elapsed().as_millis() < 500 {
+            let val = self.read_reg(PCDRegister::CommandReg).await?;
+            if val & (1 << 4) == 0 {
+                return Ok(());
+            }
+        }
+
+        Err(PCDErrorCode::Timeout)
+    }
+
+    pub async fn pcd_stop_crypto1(&mut self) -> Result<(), PCDErrorCode> {
+        self.pcd_clear_register_bit_mask(PCDRegister::Status2Reg, 0x08)
+            .await
+    }
+
     pub async fn pcd_mifare_transceive(
         &mut self,
         send_data: &[u8],
         mut send_len: u8,
-        _accept_timeout: bool,
-    ) -> Result<(), ()> {
+        accept_timeout: bool,
+    ) -> Result<(), PCDErrorCode> {
         let mut cmd_buff = [0; 18];
         if send_len > 16 {
-            return Err(());
+            return Err(PCDErrorCode::Invalid);
         }
 
-        cmd_buff.copy_from_slice(&send_data[..send_len as usize]);
+        cmd_buff[..send_len as usize].copy_from_slice(&send_data[..send_len as usize]);
         self.pcd_calc_crc(
             &cmd_buff.clone(), // i cant make it like in C :(
             send_len,
@@ -218,34 +270,44 @@ where
         send_len += 2;
 
         let wait_irq = 0x30;
-        let mut cmd_buff_size = 18; //???? (sizeof(cmdBuffer) - isnt it always 18???)
+        let mut cmd_buff_size = 18;
         let mut valid_bits = 0;
 
-        self.pcd_communicate_with_picc(
-            PCDCommand::Transceive,
-            wait_irq,
-            &cmd_buff.clone(),
-            send_len,
-            &mut cmd_buff,
-            &mut cmd_buff_size,
-            &mut valid_bits,
-            0,
-            false,
-        )
-        .await?;
+        let res = self
+            .pcd_communicate_with_picc(
+                PCDCommand::Transceive,
+                wait_irq,
+                &cmd_buff.clone(),
+                send_len,
+                &mut cmd_buff,
+                &mut cmd_buff_size,
+                &mut valid_bits,
+                0,
+                false,
+            )
+            .await;
+
+        match res {
+            Err(PCDErrorCode::Timeout) => {
+                if accept_timeout {
+                    return Ok(());
+                }
+            }
+            Err(e) => return Err(e),
+            Ok(_) => {}
+        }
 
         if cmd_buff_size != 1 || valid_bits != 4 {
-            return Err(());
+            return Err(PCDErrorCode::Error);
         }
 
         if cmd_buff[0] != 0xA {
             // MIFARE_Misc::MF_ACK type
-            return Err(());
+            return Err(PCDErrorCode::MifareNack);
         }
 
         Ok(())
     }
-    */
 
     pub async fn picc_is_new_card_present(&mut self) -> Result<(), PCDErrorCode> {
         let mut buffer_atqa = [0; 2];
@@ -502,6 +564,15 @@ where
         }
 
         Ok(uid_bytes)
+    }
+
+    pub async fn picc_wakeup_a(
+        &mut self,
+        buffer_atqa: &mut [u8],
+        buffer_size: &mut u8,
+    ) -> Result<(), PCDErrorCode> {
+        self.picc_reqa_or_wupa(PICCCommand::PICC_CMD_WUPA, buffer_atqa, buffer_size)
+            .await
     }
 
     pub async fn picc_request_a(
