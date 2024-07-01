@@ -4,7 +4,7 @@
 
 use consts::{PCDCommand, PCDRegister, PICCCommand};
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::OutputPin;
 use esp_backtrace as _;
 use esp_hal::{
@@ -606,9 +606,10 @@ where
                 .await?;
         }
 
-        for i in 0..2000 {
-            if i == 2000 {
-                // timeout??
+        let now = Instant::now();
+        loop {
+            if now.elapsed().as_millis() >= 36 {
+                // timeout
                 return Err(());
             }
 
@@ -821,8 +822,8 @@ where
         self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
             .await?;
 
-        // TODO: make sth like timeout (this 5000 is only for waiting)
-        for _ in 0..5000 {
+        let now = Instant::now();
+        while now.elapsed().as_millis() < 89 {
             let n = self.read_reg(PCDRegister::DivIrqReg).await?;
             if n & 0x04 != 0 {
                 self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
@@ -834,7 +835,7 @@ where
             }
         }
 
-        // timeout?
+        // return timeout
         Err(())
     }
 }
