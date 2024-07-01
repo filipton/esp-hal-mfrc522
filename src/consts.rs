@@ -118,3 +118,32 @@ impl PICCCommand {
                                                // The PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE Ultralight.
     pub const PICC_CMD_UL_WRITE: u8 = 0xA2; // Writes one 4 byte page to the PICC.
 }
+
+pub enum ErrorCode {
+    /// Error in communication
+    Error,
+
+    /// Collision detected
+    Collision,
+
+    /// Timeout in communication
+    Timeout,
+
+    /// A buffer is not big enough
+    NoRoom,
+
+    /// Internal error in code.
+    InternalError,
+
+    /// Invalid argument
+    Invalid,
+
+    /// The CRC_A does not match
+    CrcWrong,
+
+    /// Unspecified error
+    Unknown,
+
+    /// MIFARE PICC responded with NAK
+    MifareNack = 0xff,
+}

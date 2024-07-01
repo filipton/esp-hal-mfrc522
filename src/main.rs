@@ -26,6 +26,15 @@ use heapless::String;
 use log::{debug, info, trace};
 use static_cell::make_static;
 
+#[inline(always)]
+pub fn tif<T>(expr: bool, true_val: T, false_val: T) -> T {
+    if expr {
+        true_val
+    } else {
+        false_val
+    }
+}
+
 mod consts;
 
 #[main]
@@ -59,7 +68,7 @@ async fn main(_spawner: Spawner) {
 
     loop {
         info!("main loop");
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_millis(5000)).await;
     }
 }
 
@@ -86,20 +95,20 @@ async fn rfid_task(
     let cs = Output::new(cs, Level::High);
     let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0, &clocks);
     let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
+    //spi.transfer(words)
     let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
     let mut mfrc522 = MFRC522::new(spi, cs);
 
     _ = mfrc522.pcd_init().await;
-    //_ = mfrc522.pcd_selftest().await;
+    _ = mfrc522.pcd_selftest().await;
     debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
             //let res = mfrc522.read
-            let mut dsa = 0;
-            let res = mfrc522.picc_select(&mut dsa, 0).await;
-            info!("CARD IS PRESENT: {res:?}");
+            let card = mfrc522.get_card_uid_4b().await;
+            info!("CARD IS PRESENT: {card:?}");
             _ = mfrc522.picc_halta().await;
         }
 
@@ -275,9 +284,35 @@ where
         Ok(())
     }
 
-    pub async fn picc_select(&mut self, uid: &mut u128, valid_bits: u8) -> Result<(), u8> {
+    pub async fn get_card_uid_4b(&mut self) -> Result<u32, ()> {
+        let res = self.picc_select(4, [0; 10], 0).await.map_err(|_| ())?;
+        Ok(u32::from_le_bytes([res[0], res[1], res[2], res[3]]))
+    }
+
+    pub async fn get_card_uid_7b(&mut self) -> Result<u64, ()> {
+        let res = self.picc_select(7, [0; 10], 0).await.map_err(|_| ())?;
+        Ok(u64::from_le_bytes([
+            res[0], res[1], res[2], res[3], res[4], res[5], res[6], 0,
+        ]))
+    }
+
+    pub async fn get_card_uid_10b(&mut self) -> Result<u128, ()> {
+        let res = self.picc_select(4, [0; 10], 0).await.map_err(|_| ())?;
+        Ok(u128::from_le_bytes([
+            res[0], res[1], res[2], res[3], res[4], res[5], res[6], res[7], res[8], res[9], 0, 0,
+            0, 0, 0, 0,
+        ]))
+    }
+
+    pub async fn picc_select(
+        &mut self,
+        uid_bytes_count: u8,
+        known_uid_bytes: [u8; 10],
+        valid_bits: u8,
+    ) -> Result<[u8; 10], u8> {
+        let mut uid_bytes = [0; 10];
+
         let mut uid_complete = false;
-        let mut select_done = false;
         let mut use_casdcade_tag = false;
         let mut cascade_level = 1u8;
         let mut count = 0u8;
@@ -305,16 +340,12 @@ where
                 1 => {
                     buff[0] = PICCCommand::PICC_CMD_SEL_CL1;
                     uid_index = 0;
-
-                    // this first 4 is uid_size, for now its constant 4
-                    use_casdcade_tag = valid_bits != 0 && (4 > 4);
+                    use_casdcade_tag = valid_bits != 0 && (uid_bytes_count > 4);
                 }
                 2 => {
                     buff[0] = PICCCommand::PICC_CMD_SEL_CL2;
                     uid_index = 3;
-
-                    // this first 4 is uid_size, for now its constant 4
-                    use_casdcade_tag = valid_bits != 0 && (4 > 7);
+                    use_casdcade_tag = valid_bits != 0 && (uid_bytes_count > 7);
                 }
                 3 => {
                     buff[0] = PICCCommand::PICC_CMD_SEL_CL3;
@@ -337,9 +368,7 @@ where
                 index += 1;
             }
 
-            // TODO: copy uid bytes
-            /*
-            let bytes_to_copy = current_level_known_bits / 8
+            let mut bytes_to_copy = current_level_known_bits / 8
                 + (if current_level_known_bits % 8 != 0 {
                     1
                 } else {
@@ -347,23 +376,22 @@ where
                 });
 
             if bytes_to_copy != 0 {
-                let mut max_bytes = if use_casdcade_tag { 3 } else { 4 };
+                let max_bytes = if use_casdcade_tag { 3 } else { 4 };
                 if bytes_to_copy > max_bytes {
                     bytes_to_copy = max_bytes;
                 }
 
-                for count in 0..bytes_to_copy {
-                    //buf[index] = //copy uid bytes
+                for count in 0..bytes_to_copy as usize {
+                    buff[index as usize] = known_uid_bytes[uid_index as usize + count];
                     index += 1;
                 }
             }
-            */
 
             if use_casdcade_tag {
                 current_level_known_bits += 8;
             }
 
-            select_done = false;
+            let mut select_done = false;
             while !select_done {
                 if current_level_known_bits >= 32 {
                     buff[1] = 0x70;
@@ -383,7 +411,7 @@ where
                     count = (current_level_known_bits / 8) as u8;
                     index = 2 + count;
                     buff[1] = (index << 4) + tx_last_bits;
-                    buffer_used = index + (if tx_last_bits != 0 { 1 } else { 0 });
+                    buffer_used = index + tif(tx_last_bits != 0, 1, 0);
 
                     response_length = 9 - index;
                     response_buff_ptr = index;
@@ -454,9 +482,8 @@ where
                 4
             };
 
-            // TODO: construct u128 from this or own UID struct
             for i in 0..bytes_to_copy {
-                debug!("{i}: {}", buff[index as usize]);
+                uid_bytes[uid_index as usize + i] = buff[index as usize];
                 index += 1;
             }
 
@@ -478,12 +505,10 @@ where
                 cascade_level += 1;
             } else {
                 uid_complete = true;
-                debug!("SAK: {}", buff[response_buff_ptr as usize + 0]);
             }
         }
 
-        debug!("UID_SIZE: {}", 3 * cascade_level + 1);
-        Ok(())
+        Ok(uid_bytes)
     }
 
     pub async fn picc_request_a(
@@ -584,18 +609,15 @@ where
         for i in 0..2000 {
             if i == 2000 {
                 // timeout??
-                //trace!("timeout1 {send_len}");
                 return Err(());
             }
 
             let n = self.read_reg(PCDRegister::ComIrqReg).await?;
-            //trace!("{n}");
             if n & wait_irq != 0 {
                 break;
             }
 
             if n & 0x01 != 0 {
-                //trace!("timeout {send_len}");
                 // timeout??
                 return Err(());
             }
@@ -760,7 +782,6 @@ where
         while index < count - 1 {
             _ = self.spi.transfer(&mut self.read_buff, &[addr]).await;
             output_buff[index] = self.read_buff[0];
-            trace!("READ BUF: {}", self.read_buff[0]);
             index += 1;
         }
 
@@ -809,7 +830,6 @@ where
 
                 res[0] = self.read_reg(PCDRegister::CRCResultRegL).await?;
                 res[1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
-                trace!("CRC: {} {}", res[0], res[1]);
                 return Ok(());
             }
         }
