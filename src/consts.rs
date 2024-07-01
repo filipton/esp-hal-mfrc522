@@ -119,7 +119,8 @@ impl PICCCommand {
     pub const PICC_CMD_UL_WRITE: u8 = 0xA2; // Writes one 4 byte page to the PICC.
 }
 
-pub enum ErrorCode {
+#[derive(Debug)]
+pub enum PCDErrorCode {
     /// Error in communication
     Error,
 
@@ -145,5 +146,5 @@ pub enum ErrorCode {
     Unknown,
 
     /// MIFARE PICC responded with NAK
-    MifareNack = 0xff,
+    MifareNack,
 }

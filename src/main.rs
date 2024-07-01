@@ -2,7 +2,7 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
-use consts::{PCDCommand, PCDRegister, PICCCommand};
+use consts::{PCDCommand, PCDErrorCode, PCDRegister, PICCCommand};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::OutputPin;
@@ -23,7 +23,7 @@ use esp_hal::{
     Async,
 };
 use heapless::String;
-use log::{debug, info, trace};
+use log::{debug, info};
 use static_cell::make_static;
 
 #[inline(always)]
@@ -140,7 +140,7 @@ where
         }
     }
 
-    pub async fn pcd_init(&mut self) -> Result<(), ()> {
+    pub async fn pcd_init(&mut self) -> Result<(), PCDErrorCode> {
         self.pcd_reset().await?;
 
         self.write_reg(PCDRegister::TxModeReg, 0x00).await?;
@@ -162,7 +162,7 @@ where
         Ok(())
     }
 
-    pub async fn pcd_reset(&mut self) -> Result<(), ()> {
+    pub async fn pcd_reset(&mut self) -> Result<(), PCDErrorCode> {
         self.write_reg(PCDRegister::CommandReg, PCDCommand::SoftReset)
             .await?;
 
@@ -182,7 +182,7 @@ where
         Ok(())
     }
 
-    pub async fn pcd_antenna_on(&mut self) -> Result<(), ()> {
+    pub async fn pcd_antenna_on(&mut self) -> Result<(), PCDErrorCode> {
         let val = self.read_reg(PCDRegister::TxControlReg).await?;
         if (val & 0x03) != 0x03 {
             self.write_reg(PCDRegister::TxControlReg, val | 0x03)
@@ -192,7 +192,7 @@ where
         Ok(())
     }
 
-    pub async fn pcd_get_version(&mut self) -> Result<u8, ()> {
+    pub async fn pcd_get_version(&mut self) -> Result<u8, PCDErrorCode> {
         self.read_reg(PCDRegister::VersionReg).await
     }
 
@@ -248,7 +248,7 @@ where
     }
     */
 
-    pub async fn picc_is_new_card_present(&mut self) -> Result<bool, ()> {
+    pub async fn picc_is_new_card_present(&mut self) -> Result<(), PCDErrorCode> {
         let mut buffer_atqa = [0; 2];
         let mut buffer_size = 2;
 
@@ -258,10 +258,11 @@ where
 
         self.picc_request_a(&mut buffer_atqa, &mut buffer_size)
             .await?;
-        Ok(true)
+
+        Ok(())
     }
 
-    pub async fn picc_halta(&mut self) -> Result<(), ()> {
+    pub async fn picc_halta(&mut self) -> Result<(), PCDErrorCode> {
         let mut buff = [0; 4];
         buff[0] = PICCCommand::PICC_CMD_HLTA;
         buff[1] = 0;
@@ -284,20 +285,20 @@ where
         Ok(())
     }
 
-    pub async fn get_card_uid_4b(&mut self) -> Result<u32, ()> {
-        let res = self.picc_select(4, [0; 10], 0).await.map_err(|_| ())?;
+    pub async fn get_card_uid_4b(&mut self) -> Result<u32, PCDErrorCode> {
+        let res = self.picc_select(4, [0; 10], 0).await?;
         Ok(u32::from_le_bytes([res[0], res[1], res[2], res[3]]))
     }
 
-    pub async fn get_card_uid_7b(&mut self) -> Result<u64, ()> {
-        let res = self.picc_select(7, [0; 10], 0).await.map_err(|_| ())?;
+    pub async fn get_card_uid_7b(&mut self) -> Result<u64, PCDErrorCode> {
+        let res = self.picc_select(7, [0; 10], 0).await?;
         Ok(u64::from_le_bytes([
             res[0], res[1], res[2], res[3], res[4], res[5], res[6], 0,
         ]))
     }
 
-    pub async fn get_card_uid_10b(&mut self) -> Result<u128, ()> {
-        let res = self.picc_select(4, [0; 10], 0).await.map_err(|_| ())?;
+    pub async fn get_card_uid_10b(&mut self) -> Result<u128, PCDErrorCode> {
+        let res = self.picc_select(4, [0; 10], 0).await?;
         Ok(u128::from_le_bytes([
             res[0], res[1], res[2], res[3], res[4], res[5], res[6], res[7], res[8], res[9], 0, 0,
             0, 0, 0, 0,
@@ -309,31 +310,30 @@ where
         uid_bytes_count: u8,
         known_uid_bytes: [u8; 10],
         valid_bits: u8,
-    ) -> Result<[u8; 10], u8> {
+    ) -> Result<[u8; 10], PCDErrorCode> {
         let mut uid_bytes = [0; 10];
 
         let mut uid_complete = false;
-        let mut use_casdcade_tag = false;
+        let mut use_casdcade_tag;
         let mut cascade_level = 1u8;
-        let mut count = 0u8;
-        let mut check_bit = 0u8;
-        let mut index = 0u8;
-        let mut uid_index = 0u8;
-        let mut current_level_known_bits = 0i8;
+        let mut count: u8;
+        let mut check_bit: u8;
+        let mut index: u8;
+        let mut uid_index: u8;
+        let mut current_level_known_bits: i8;
         let mut buff = [0; 9];
-        let mut buffer_used = 0u8;
-        let mut rx_align = 0u8;
+        let mut buffer_used: u8;
+        let mut rx_align: u8;
         let mut tx_last_bits = 0u8;
         let mut response_buff_ptr = 0;
         let mut response_length = 0u8;
 
         if valid_bits > 80 {
-            return Err(0);
+            return Err(PCDErrorCode::Invalid);
         }
 
         self.pcd_clear_register_bit_mask(PCDRegister::CollReg, 0x80)
-            .await
-            .map_err(|_| 1)?;
+            .await?;
 
         while !uid_complete {
             match cascade_level {
@@ -353,7 +353,7 @@ where
                     use_casdcade_tag = false;
                 }
                 _ => {
-                    return Err(2);
+                    return Err(PCDErrorCode::InternalError);
                 }
             }
 
@@ -397,13 +397,10 @@ where
                     buff[1] = 0x70;
                     buff[6] = buff[2] ^ buff[3] ^ buff[4] ^ buff[5];
 
-                    self.pcd_calc_crc(&buff.clone(), 7, &mut buff[7..])
-                        .await
-                        .map_err(|_| 4)?;
+                    self.pcd_calc_crc(&buff.clone(), 7, &mut buff[7..]).await?;
 
                     tx_last_bits = 0;
                     buffer_used = 9;
-                    //response_buffer[..3].copy_from_slice(&buff[6..]);
                     response_buff_ptr = 6;
                     response_length = 3;
                 } else {
@@ -415,14 +412,11 @@ where
 
                     response_length = 9 - index;
                     response_buff_ptr = index;
-                    //response_buffer[0..response_length as usize]
-                    //    .copy_from_slice(&buff[index as usize..]);
                 }
 
                 rx_align = tx_last_bits;
                 self.write_reg(PCDRegister::BitFramingReg, (rx_align << 4) + tx_last_bits)
-                    .await
-                    .map_err(|_| 5)?;
+                    .await?;
 
                 let res = self
                     .pcd_transceive_data(
@@ -434,53 +428,48 @@ where
                         rx_align,
                         false,
                     )
-                    .await
-                    .map_err(|_| 6)?;
+                    .await;
 
-                if res {
-                    // collision
-                    let value_of_coll_reg =
-                        self.read_reg(PCDRegister::CollReg).await.map_err(|_| 7)?;
-                    if value_of_coll_reg & 0x20 != 0 {
-                        return Err(8);
+                match res {
+                    Ok(_) => {
+                        if current_level_known_bits >= 32 {
+                            select_done = true;
+                        } else {
+                            current_level_known_bits = 32;
+                        }
                     }
+                    Err(PCDErrorCode::Collision) => {
+                        let value_of_coll_reg = self.read_reg(PCDRegister::CollReg).await?;
+                        if value_of_coll_reg & 0x20 != 0 {
+                            return Err(PCDErrorCode::Collision);
+                        }
 
-                    let mut collision_pos = value_of_coll_reg & 0x1F;
-                    if collision_pos == 0 {
-                        collision_pos = 32;
+                        let mut collision_pos = value_of_coll_reg & 0x1F;
+                        if collision_pos == 0 {
+                            collision_pos = 32;
+                        }
+
+                        if collision_pos as i8 <= current_level_known_bits {
+                            return Err(PCDErrorCode::InternalError);
+                        }
+
+                        current_level_known_bits = collision_pos as i8;
+                        count = (current_level_known_bits % 8) as u8;
+                        check_bit = ((current_level_known_bits - 1) % 8) as u8;
+                        index = 1
+                            + (current_level_known_bits / 8) as u8
+                            + (if count != 0 { 1 } else { 0 });
+
+                        buff[index as usize] |= 1 << check_bit;
                     }
-
-                    if collision_pos as i8 <= current_level_known_bits {
-                        return Err(9);
-                    }
-
-                    current_level_known_bits = collision_pos as i8;
-                    count = (current_level_known_bits % 8) as u8;
-                    check_bit = ((current_level_known_bits - 1) % 8) as u8;
-                    index =
-                        1 + (current_level_known_bits / 8) as u8 + (if count != 0 { 1 } else { 0 });
-
-                    buff[index as usize] |= 1 << check_bit;
-                } else {
-                    if current_level_known_bits >= 32 {
-                        select_done = true;
-                    } else {
-                        current_level_known_bits = 32;
+                    Err(e) => {
+                        return Err(e);
                     }
                 }
             }
 
-            index = if buff[2] == PICCCommand::PICC_CMD_CT {
-                3
-            } else {
-                2
-            };
-
-            let bytes_to_copy = if buff[2] == PICCCommand::PICC_CMD_CT {
-                3
-            } else {
-                4
-            };
+            index = tif(buff[2] == PICCCommand::PICC_CMD_CT, 3, 2);
+            let bytes_to_copy = tif(buff[2] == PICCCommand::PICC_CMD_CT, 3, 4);
 
             for i in 0..bytes_to_copy {
                 uid_bytes[uid_index as usize + i] = buff[index as usize];
@@ -488,17 +477,16 @@ where
             }
 
             if response_length != 3 || tx_last_bits != 0 {
-                return Err(10);
+                return Err(PCDErrorCode::Error);
             }
 
             self.pcd_calc_crc(&[buff[response_buff_ptr as usize]], 1, &mut buff[2..])
-                .await
-                .map_err(|_| 11)?;
+                .await?;
 
             if (buff[2] != buff[response_buff_ptr as usize + 1])
                 || (buff[3] != buff[response_buff_ptr as usize + 2])
             {
-                return Err(12);
+                return Err(PCDErrorCode::CrcWrong);
             }
 
             if buff[response_buff_ptr as usize + 0] & 0x04 != 0 {
@@ -515,7 +503,7 @@ where
         &mut self,
         buffer_atqa: &mut [u8],
         buffer_size: &mut u8,
-    ) -> Result<(), ()> {
+    ) -> Result<(), PCDErrorCode> {
         self.picc_reqa_or_wupa(PICCCommand::PICC_CMD_REQA, buffer_atqa, buffer_size)
             .await
     }
@@ -525,9 +513,9 @@ where
         cmd: u8,
         buffer_atqa: &mut [u8],
         buffer_size: &mut u8,
-    ) -> Result<(), ()> {
+    ) -> Result<(), PCDErrorCode> {
         if *buffer_size < 2 {
-            return Err(());
+            return Err(PCDErrorCode::NoRoom);
         }
 
         self.pcd_clear_register_bit_mask(PCDRegister::CollReg, 0x80)
@@ -545,7 +533,7 @@ where
         .await?;
 
         if *buffer_size != 2 || valid_bits != 0 {
-            return Err(());
+            return Err(PCDErrorCode::Error);
         }
 
         Ok(())
@@ -560,7 +548,7 @@ where
         valid_bits: &mut u8,
         rx_align: u8,
         check_crc: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<(), PCDErrorCode> {
         let wait_irq = 0x30;
         self.pcd_communicate_with_picc(
             PCDCommand::Transceive,
@@ -587,7 +575,7 @@ where
         valid_bits: &mut u8,
         rx_align: u8,
         check_crc: bool,
-    ) -> Result<bool, ()> {
+    ) -> Result<(), PCDErrorCode> {
         let tx_last_bits = *valid_bits;
         let bit_framing = (rx_align << 4) + tx_last_bits;
 
@@ -608,32 +596,26 @@ where
 
         let now = Instant::now();
         loop {
-            if now.elapsed().as_millis() >= 36 {
-                // timeout
-                return Err(());
-            }
-
             let n = self.read_reg(PCDRegister::ComIrqReg).await?;
             if n & wait_irq != 0 {
                 break;
             }
 
-            if n & 0x01 != 0 {
-                // timeout??
-                return Err(());
+            if n & 0x01 != 0 || now.elapsed().as_millis() >= 36 {
+                return Err(PCDErrorCode::Timeout);
             }
         }
 
         let error_reg_value = self.read_reg(PCDRegister::ErrorReg).await?;
         if error_reg_value & 0x13 != 0 {
-            return Err(());
+            return Err(PCDErrorCode::Error);
         }
 
         let mut _valid_bits = 0;
         if *back_len != 0 {
             let n = self.read_reg(PCDRegister::FIFOLevelReg).await?;
             if n > *back_len {
-                return Err(());
+                return Err(PCDErrorCode::NoRoom);
             }
 
             *back_len = n;
@@ -647,17 +629,16 @@ where
         }
 
         if error_reg_value & 0x08 != 0 {
-            // collision - so true
-            return Ok(true);
+            return Err(PCDErrorCode::Collision);
         }
 
         if *back_len != 0 && check_crc {
             if *back_len == 1 && _valid_bits == 4 {
-                return Err(());
+                return Err(PCDErrorCode::MifareNack);
             }
 
             if *back_len < 2 || _valid_bits != 0 {
-                return Err(());
+                return Err(PCDErrorCode::CrcWrong);
             }
 
             let mut control_buff = [0; 2];
@@ -667,16 +648,16 @@ where
             if (back_data[*back_len as usize - 2] != control_buff[0])
                 || (back_data[*back_len as usize - 1] != control_buff[1])
             {
-                return Err(()); // cnc wrong
+                return Err(PCDErrorCode::CrcWrong);
             }
         }
 
-        Ok(false)
+        Ok(())
     }
 
     /// Now it prints data to console, TODO: change this
     /// Always returns false (for now)
-    pub async fn pcd_selftest(&mut self) -> Result<bool, ()> {
+    pub async fn pcd_selftest(&mut self) -> Result<bool, PCDErrorCode> {
         debug!("Running PCD_Selftest!\n");
 
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
@@ -722,36 +703,56 @@ where
         Ok(false)
     }
 
-    pub async fn write_reg(&mut self, reg: u8, val: u8) -> Result<(), ()> {
-        _ = self.cs.set_low();
-        _ = self.spi.transfer(&mut self.read_buff, &[reg << 1]).await;
-        _ = self.spi.transfer(&mut self.read_buff, &[val]).await;
-        _ = self.cs.set_high();
+    pub async fn write_reg(&mut self, reg: u8, val: u8) -> Result<(), PCDErrorCode> {
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi
+            .transfer(&mut self.read_buff, &[reg << 1])
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi
+            .transfer(&mut self.read_buff, &[val])
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
 
         Ok(())
     }
 
-    pub async fn write_reg_buff(&mut self, reg: u8, count: usize, values: &[u8]) -> Result<(), ()> {
-        _ = self.cs.set_low();
-        _ = self.spi.transfer(&mut self.read_buff, &[reg << 1]).await;
+    pub async fn write_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        values: &[u8],
+    ) -> Result<(), PCDErrorCode> {
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi
+            .transfer(&mut self.read_buff, &[reg << 1])
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
 
         for i in 0..count {
-            _ = self.spi.transfer(&mut self.read_buff, &[values[i]]).await;
+            self.spi
+                .transfer(&mut self.read_buff, &[values[i]])
+                .await
+                .map_err(|_| PCDErrorCode::Unknown)?;
         }
 
-        _ = self.cs.set_high();
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
         Ok(())
     }
 
-    pub async fn read_reg(&mut self, reg: u8) -> Result<u8, ()> {
-        _ = self.cs.set_low();
-        _ = self
-            .spi
+    pub async fn read_reg(&mut self, reg: u8) -> Result<u8, PCDErrorCode> {
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi
             .transfer(&mut self.read_buff, &[(reg << 1) | 0x80])
-            .await;
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
 
-        _ = self.spi.transfer(&mut self.read_buff, &[0]).await;
-        _ = self.cs.set_high();
+        self.spi
+            .transfer(&mut self.read_buff, &[0])
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
 
         Ok(self.read_buff[0])
     }
@@ -762,7 +763,7 @@ where
         count: usize,
         output_buff: &mut [u8],
         rx_align: u8,
-    ) -> Result<(), ()> {
+    ) -> Result<(), PCDErrorCode> {
         if count == 0 {
             return Ok(());
         }
@@ -770,37 +771,57 @@ where
         let addr = 0x80 | (reg << 1);
         let mut index = 0;
 
-        _ = self.cs.set_low();
-        _ = self.spi.transfer(&mut self.read_buff, &[addr]).await;
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi
+            .transfer(&mut self.read_buff, &[addr])
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
         if rx_align > 0 {
             let mask = (0xFF << rx_align) & 0xFF;
-            _ = self.spi.transfer(&mut self.read_buff, &[addr]).await;
+            self.spi
+                .transfer(&mut self.read_buff, &[addr])
+                .await
+                .map_err(|_| PCDErrorCode::Unknown)?;
 
             output_buff[0] = (output_buff[0] & !mask) | (self.read_buff[0] & mask);
             index += 1;
         }
 
         while index < count - 1 {
-            _ = self.spi.transfer(&mut self.read_buff, &[addr]).await;
+            self.spi
+                .transfer(&mut self.read_buff, &[addr])
+                .await
+                .map_err(|_| PCDErrorCode::Unknown)?;
             output_buff[index] = self.read_buff[0];
             index += 1;
         }
 
-        _ = self.spi.transfer(&mut self.read_buff, &[0]).await;
+        self.spi
+            .transfer(&mut self.read_buff, &[0])
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
         output_buff[index] = self.read_buff[0];
 
-        _ = self.cs.set_high();
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
         Ok(())
     }
 
-    pub async fn pcd_clear_register_bit_mask(&mut self, reg: u8, mask: u8) -> Result<(), ()> {
+    pub async fn pcd_clear_register_bit_mask(
+        &mut self,
+        reg: u8,
+        mask: u8,
+    ) -> Result<(), PCDErrorCode> {
         let tmp = self.read_reg(reg).await?;
         self.write_reg(reg, tmp & (!mask)).await?;
 
         Ok(())
     }
 
-    pub async fn pcd_set_register_bit_mask(&mut self, reg: u8, mask: u8) -> Result<(), ()> {
+    pub async fn pcd_set_register_bit_mask(
+        &mut self,
+        reg: u8,
+        mask: u8,
+    ) -> Result<(), PCDErrorCode> {
         let tmp = self.read_reg(reg).await?;
         self.write_reg(reg, tmp | mask).await?;
 
@@ -812,7 +833,7 @@ where
         data: &[u8],
         length: u8,
         res: &mut [u8],
-    ) -> Result<(), ()> {
+    ) -> Result<(), PCDErrorCode> {
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
         self.write_reg(PCDRegister::DivIrqReg, 0x04).await?;
@@ -835,7 +856,6 @@ where
             }
         }
 
-        // return timeout
-        Err(())
+        Err(PCDErrorCode::Timeout)
     }
 }
