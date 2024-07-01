@@ -2,18 +2,16 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
-use core::mem::size_of;
-
 use consts::{PCDCommand, PCDRegister, PICCCommand};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_hal::digital::OutputPin;
 use esp_backtrace as _;
 use esp_hal::{
-    clock::ClockControl,
+    clock::{ClockControl, Clocks},
     dma::Dma,
     dma_descriptors,
-    gpio::{Io, Level, Output},
+    gpio::{any_pin::AnyPin, Io, Level, Output},
     peripherals::{Peripherals, DMA, SPI3},
     prelude::*,
     spi::{
@@ -26,6 +24,7 @@ use esp_hal::{
 };
 use heapless::String;
 use log::{debug, info, trace};
+use static_cell::make_static;
 
 mod consts;
 
@@ -34,6 +33,8 @@ async fn main(_spawner: Spawner) {
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
     let clocks = ClockControl::max(system.clock_control).freeze();
+    let clocks = &*make_static!(clocks);
+
     esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
@@ -41,12 +42,38 @@ async fn main(_spawner: Spawner) {
     log::set_max_level(log::LevelFilter::Trace);
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let sck = io.pins.gpio4;
-    let miso = io.pins.gpio2;
-    let mosi = io.pins.gpio3;
-    let cs = Output::new(io.pins.gpio5, Level::High);
+    let sck = AnyPin::new(io.pins.gpio4);
+    let miso = AnyPin::new(io.pins.gpio2);
+    let mosi = AnyPin::new(io.pins.gpio3);
+    let cs = AnyPin::new(io.pins.gpio5);
 
-    let dma = Dma::new(peripherals.DMA);
+    _ = _spawner.spawn(rfid_task(
+        miso,
+        mosi,
+        sck,
+        cs,
+        &clocks,
+        peripherals.SPI3,
+        peripherals.DMA,
+    ));
+
+    loop {
+        info!("main loop");
+        Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn rfid_task(
+    miso: AnyPin<'static>,
+    mosi: AnyPin<'static>,
+    sck: AnyPin<'static>,
+    cs: AnyPin<'static>,
+    clocks: &'static Clocks<'static>,
+    spi: SPI3,
+    dma: DMA,
+) {
+    let dma = Dma::new(dma);
     let dma_chan = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
     let dma_chan = dma_chan.configure_for_async(
@@ -56,11 +83,13 @@ async fn main(_spawner: Spawner) {
         esp_hal::dma::DmaPriority::Priority0,
     );
 
-    let spi = Spi::new(peripherals.SPI3, 5.MHz(), SpiMode::Mode0, &clocks);
+    let cs = Output::new(cs, Level::High);
+    let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0, &clocks);
     let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
     let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
     let mut mfrc522 = MFRC522::new(spi, cs);
+
     _ = mfrc522.pcd_init().await;
     //_ = mfrc522.pcd_selftest().await;
     debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
@@ -71,7 +100,7 @@ async fn main(_spawner: Spawner) {
             let mut dsa = 0;
             let res = mfrc522.picc_select(&mut dsa, 0).await;
             info!("CARD IS PRESENT: {res:?}");
-            //_ = mfrc522.picc_halta().await;
+            _ = mfrc522.picc_halta().await;
         }
 
         Timer::after(Duration::from_millis(100)).await;
@@ -256,7 +285,7 @@ where
         let mut index = 0u8;
         let mut uid_index = 0u8;
         let mut current_level_known_bits = 0i8;
-        let mut buff = [63, 0, 0, 0, 0, 208, 75, 201, 63]; //??????
+        let mut buff = [0; 9];
         let mut buffer_used = 0u8;
         let mut rx_align = 0u8;
         let mut tx_last_bits = 0u8;
@@ -308,16 +337,14 @@ where
                 index += 1;
             }
 
+            // TODO: copy uid bytes
+            /*
             let bytes_to_copy = current_level_known_bits / 8
                 + (if current_level_known_bits % 8 != 0 {
                     1
                 } else {
                     0
                 });
-            trace!("Bytes to copy: {bytes_to_copy}");
-
-            // TODO: copy uid bytes
-            /*
 
             if bytes_to_copy != 0 {
                 let mut max_bytes = if use_casdcade_tag { 3 } else { 4 };
@@ -336,16 +363,11 @@ where
                 current_level_known_bits += 8;
             }
 
-            trace!("buff_pre_while: {buff:?}");
-
             select_done = false;
             while !select_done {
-                trace!("buff_while: {buff:?}");
                 if current_level_known_bits >= 32 {
-                    trace!("buff_pre: {buff:?}");
                     buff[1] = 0x70;
                     buff[6] = buff[2] ^ buff[3] ^ buff[4] ^ buff[5];
-                    trace!("buff_post: {buff:?}");
 
                     self.pcd_calc_crc(&buff.clone(), 7, &mut buff[7..])
                         .await
@@ -368,11 +390,6 @@ where
                     //response_buffer[0..response_length as usize]
                     //    .copy_from_slice(&buff[index as usize..]);
                 }
-                trace!("buff_after_if: {buff:?}");
-                trace!("response_buff: {:?}", &buff[response_buff_ptr as usize..]);
-                trace!("response_len: {response_length:?}");
-                trace!("buffer_used: {buffer_used:?}");
-                trace!("tx_last_bits: {tx_last_bits:?}");
 
                 rx_align = tx_last_bits;
                 self.write_reg(PCDRegister::BitFramingReg, (rx_align << 4) + tx_last_bits)
@@ -443,7 +460,6 @@ where
                 index += 1;
             }
 
-            trace!("response_length: {response_length}, tx_last_bits: {tx_last_bits}");
             if response_length != 3 || tx_last_bits != 0 {
                 return Err(10);
             }
@@ -452,13 +468,11 @@ where
                 .await
                 .map_err(|_| 11)?;
 
-            /*
             if (buff[2] != buff[response_buff_ptr as usize + 1])
-                || (buff[3] != buff[response_buff_ptr as usize + 3])
+                || (buff[3] != buff[response_buff_ptr as usize + 2])
             {
                 return Err(12);
             }
-            */
 
             if buff[response_buff_ptr as usize + 0] & 0x04 != 0 {
                 cascade_level += 1;
@@ -602,7 +616,6 @@ where
             *back_len = n;
             self.read_reg_buff(PCDRegister::FIFODataReg, n as usize, back_data, rx_align)
                 .await?;
-            trace!("READ REG BUFF");
 
             _valid_bits = self.read_reg(PCDRegister::ControlReg).await? & 0x07;
             if *valid_bits != 0 {
