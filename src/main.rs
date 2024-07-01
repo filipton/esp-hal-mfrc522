@@ -62,18 +62,19 @@ async fn main(_spawner: Spawner) {
 
     let mut mfrc522 = MFRC522::new(spi, cs);
     _ = mfrc522.pcd_init().await;
-    _ = mfrc522.pcd_selftest().await;
+    //_ = mfrc522.pcd_selftest().await;
     debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
-            //let mut dsa = 0;
-            //let res = mfrc522.picc_select(&mut dsa, 0).await;
-            let res = mfrc522.picc_halta().await;
+            //let res = mfrc522.read
+            let mut dsa = 0;
+            let res = mfrc522.picc_select(&mut dsa, 0).await;
             info!("CARD IS PRESENT: {res:?}");
+            //_ = mfrc522.picc_halta().await;
         }
 
-        Timer::after(Duration::from_millis(20)).await;
+        Timer::after(Duration::from_millis(100)).await;
     }
 }
 
@@ -255,11 +256,11 @@ where
         let mut index = 0u8;
         let mut uid_index = 0u8;
         let mut current_level_known_bits = 0i8;
-        let mut buff = [0u8; 9];
+        let mut buff = [63, 0, 0, 0, 0, 208, 75, 201, 63]; //??????
         let mut buffer_used = 0u8;
         let mut rx_align = 0u8;
         let mut tx_last_bits = 0u8;
-        let mut response_buffer = [0u8; 9]; // max 9 length
+        let mut response_buff_ptr = 0;
         let mut response_length = 0u8;
 
         if valid_bits > 80 {
@@ -307,14 +308,16 @@ where
                 index += 1;
             }
 
-            // TODO: copy uid bytes
-            /*
             let bytes_to_copy = current_level_known_bits / 8
                 + (if current_level_known_bits % 8 != 0 {
                     1
                 } else {
                     0
                 });
+            trace!("Bytes to copy: {bytes_to_copy}");
+
+            // TODO: copy uid bytes
+            /*
 
             if bytes_to_copy != 0 {
                 let mut max_bytes = if use_casdcade_tag { 3 } else { 4 };
@@ -333,10 +336,16 @@ where
                 current_level_known_bits += 8;
             }
 
+            trace!("buff_pre_while: {buff:?}");
+
+            select_done = false;
             while !select_done {
+                trace!("buff_while: {buff:?}");
                 if current_level_known_bits >= 32 {
+                    trace!("buff_pre: {buff:?}");
                     buff[1] = 0x70;
                     buff[6] = buff[2] ^ buff[3] ^ buff[4] ^ buff[5];
+                    trace!("buff_post: {buff:?}");
 
                     self.pcd_calc_crc(&buff.clone(), 7, &mut buff[7..])
                         .await
@@ -344,8 +353,9 @@ where
 
                     tx_last_bits = 0;
                     buffer_used = 9;
+                    //response_buffer[..3].copy_from_slice(&buff[6..]);
+                    response_buff_ptr = 6;
                     response_length = 3;
-                    response_buffer[..3].copy_from_slice(&buff[6..]);
                 } else {
                     tx_last_bits = (current_level_known_bits % 8) as u8;
                     count = (current_level_known_bits / 8) as u8;
@@ -354,9 +364,15 @@ where
                     buffer_used = index + (if tx_last_bits != 0 { 1 } else { 0 });
 
                     response_length = 9 - index;
-                    response_buffer[0..response_length as usize]
-                        .copy_from_slice(&buff[index as usize..]);
+                    response_buff_ptr = index;
+                    //response_buffer[0..response_length as usize]
+                    //    .copy_from_slice(&buff[index as usize..]);
                 }
+                trace!("buff_after_if: {buff:?}");
+                trace!("response_buff: {:?}", &buff[response_buff_ptr as usize..]);
+                trace!("response_len: {response_length:?}");
+                trace!("buffer_used: {buffer_used:?}");
+                trace!("tx_last_bits: {tx_last_bits:?}");
 
                 rx_align = tx_last_bits;
                 self.write_reg(PCDRegister::BitFramingReg, (rx_align << 4) + tx_last_bits)
@@ -365,9 +381,9 @@ where
 
                 let res = self
                     .pcd_transceive_data(
-                        &buff,
+                        &buff.clone(),
                         buffer_used,
-                        &mut response_buffer,
+                        &mut buff[response_buff_ptr as usize..],
                         &mut response_length,
                         &mut tx_last_bits,
                         rx_align,
@@ -432,19 +448,23 @@ where
                 return Err(10);
             }
 
-            self.pcd_calc_crc(&response_buffer, 1, &mut buff[2..])
+            self.pcd_calc_crc(&[buff[response_buff_ptr as usize]], 1, &mut buff[2..])
                 .await
                 .map_err(|_| 11)?;
 
-            if (buff[2] != response_buffer[1]) || (buff[3] != response_buffer[3]) {
+            /*
+            if (buff[2] != buff[response_buff_ptr as usize + 1])
+                || (buff[3] != buff[response_buff_ptr as usize + 3])
+            {
                 return Err(12);
             }
+            */
 
-            if response_buffer[0] & 0x04 != 0 {
+            if buff[response_buff_ptr as usize + 0] & 0x04 != 0 {
                 cascade_level += 1;
             } else {
                 uid_complete = true;
-                debug!("SAK: {}", response_buffer[0]);
+                debug!("SAK: {}", buff[response_buff_ptr as usize + 0]);
             }
         }
 
@@ -550,7 +570,7 @@ where
         for i in 0..2000 {
             if i == 2000 {
                 // timeout??
-                //trace!("timeout1 {back_len}");
+                //trace!("timeout1 {send_len}");
                 return Err(());
             }
 
@@ -561,7 +581,7 @@ where
             }
 
             if n & 0x01 != 0 {
-                //trace!("timeout {back_len}");
+                //trace!("timeout {send_len}");
                 // timeout??
                 return Err(());
             }
@@ -582,6 +602,7 @@ where
             *back_len = n;
             self.read_reg_buff(PCDRegister::FIFODataReg, n as usize, back_data, rx_align)
                 .await?;
+            trace!("READ REG BUFF");
 
             _valid_bits = self.read_reg(PCDRegister::ControlReg).await? & 0x07;
             if *valid_bits != 0 {
@@ -726,6 +747,7 @@ where
         while index < count - 1 {
             _ = self.spi.transfer(&mut self.read_buff, &[addr]).await;
             output_buff[index] = self.read_buff[0];
+            trace!("READ BUF: {}", self.read_buff[0]);
             index += 1;
         }
 
@@ -774,6 +796,7 @@ where
 
                 res[0] = self.read_reg(PCDRegister::CRCResultRegL).await?;
                 res[1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
+                trace!("CRC: {} {}", res[0], res[1]);
                 return Ok(());
             }
         }
