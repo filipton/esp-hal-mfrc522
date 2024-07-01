@@ -106,7 +106,6 @@ async fn rfid_task(
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
-            //let res = mfrc522.read
             let card = mfrc522.get_card_uid_4b().await;
             info!("CARD IS PRESENT: {card:?}");
             _ = mfrc522.picc_halta().await;
