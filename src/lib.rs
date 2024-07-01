@@ -35,7 +35,6 @@ where
 
         self.write_reg(PCDRegister::TxModeReg, 0x00).await?;
         self.write_reg(PCDRegister::RxModeReg, 0x00).await?;
-
         self.write_reg(PCDRegister::ModWidthReg, 0x26).await?;
 
         self.write_reg(PCDRegister::TModeReg, 0x80).await?;
@@ -326,12 +325,8 @@ where
                 index += 1;
             }
 
-            let mut bytes_to_copy = current_level_known_bits / 8
-                + (if current_level_known_bits % 8 != 0 {
-                    1
-                } else {
-                    0
-                });
+            let mut bytes_to_copy =
+                current_level_known_bits / 8 + tif(current_level_known_bits % 8 != 0, 1, 0);
 
             if bytes_to_copy != 0 {
                 let max_bytes = if use_casdcade_tag { 3 } else { 4 };
@@ -414,9 +409,7 @@ where
                         current_level_known_bits = collision_pos as i8;
                         count = (current_level_known_bits % 8) as u8;
                         check_bit = ((current_level_known_bits - 1) % 8) as u8;
-                        index = 1
-                            + (current_level_known_bits / 8) as u8
-                            + (if count != 0 { 1 } else { 0 });
+                        index = 1 + (current_level_known_bits / 8) as u8 + tif(count != 0, 1, 0);
 
                         buff[index as usize] |= 1 << check_bit;
                     }
@@ -487,6 +480,7 @@ where
 
         self.pcd_clear_register_bit_mask(PCDRegister::CollReg, 0x80)
             .await?;
+
         let mut valid_bits = 7;
         self.pcd_transceive_data(
             &[cmd],
@@ -548,12 +542,15 @@ where
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
+
         self.write_reg(PCDRegister::ComIrqReg, 0x7F).await?;
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
         self.write_reg_buff(PCDRegister::FIFODataReg, send_len as usize, send_data)
             .await?;
+
         self.write_reg(PCDRegister::BitFramingReg, bit_framing)
             .await?;
+
         self.write_reg(PCDRegister::CommandReg, cmd).await?;
 
         if cmd == PCDCommand::Transceive {
@@ -633,6 +630,7 @@ where
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Mem)
             .await?;
+
         self.write_reg(PCDRegister::AutoTestReg, 0x09).await?;
         self.write_reg(PCDRegister::FIFODataReg, 0x00).await?;
         self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
@@ -651,6 +649,7 @@ where
         let mut res = [0; 64];
         self.read_reg_buff(PCDRegister::FIFODataReg, 64, &mut res, 0)
             .await?;
+
         self.write_reg(PCDRegister::AutoTestReg, 0x40 & 0x00)
             .await?;
 
@@ -668,109 +667,6 @@ where
         log::debug!("PCD_Selftest Done!\n");
         self.pcd_init().await?;
         Ok(false)
-    }
-
-    pub async fn write_reg(&mut self, reg: u8, val: u8) -> Result<(), PCDErrorCode> {
-        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
-        self.spi
-            .transfer(&mut self.read_buff, &[reg << 1])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-        self.spi
-            .transfer(&mut self.read_buff, &[val])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
-
-        Ok(())
-    }
-
-    pub async fn write_reg_buff(
-        &mut self,
-        reg: u8,
-        count: usize,
-        values: &[u8],
-    ) -> Result<(), PCDErrorCode> {
-        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
-        self.spi
-            .transfer(&mut self.read_buff, &[reg << 1])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-
-        for i in 0..count {
-            self.spi
-                .transfer(&mut self.read_buff, &[values[i]])
-                .await
-                .map_err(|_| PCDErrorCode::Unknown)?;
-        }
-
-        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
-        Ok(())
-    }
-
-    pub async fn read_reg(&mut self, reg: u8) -> Result<u8, PCDErrorCode> {
-        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
-        self.spi
-            .transfer(&mut self.read_buff, &[(reg << 1) | 0x80])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-
-        self.spi
-            .transfer(&mut self.read_buff, &[0])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
-
-        Ok(self.read_buff[0])
-    }
-
-    pub async fn read_reg_buff(
-        &mut self,
-        reg: u8,
-        count: usize,
-        output_buff: &mut [u8],
-        rx_align: u8,
-    ) -> Result<(), PCDErrorCode> {
-        if count == 0 {
-            return Ok(());
-        }
-
-        let addr = 0x80 | (reg << 1);
-        let mut index = 0;
-
-        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
-        self.spi
-            .transfer(&mut self.read_buff, &[addr])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-        if rx_align > 0 {
-            let mask = (0xFF << rx_align) & 0xFF;
-            self.spi
-                .transfer(&mut self.read_buff, &[addr])
-                .await
-                .map_err(|_| PCDErrorCode::Unknown)?;
-
-            output_buff[0] = (output_buff[0] & !mask) | (self.read_buff[0] & mask);
-            index += 1;
-        }
-
-        while index < count - 1 {
-            self.spi
-                .transfer(&mut self.read_buff, &[addr])
-                .await
-                .map_err(|_| PCDErrorCode::Unknown)?;
-            output_buff[index] = self.read_buff[0];
-            index += 1;
-        }
-
-        self.spi
-            .transfer(&mut self.read_buff, &[0])
-            .await
-            .map_err(|_| PCDErrorCode::Unknown)?;
-        output_buff[index] = self.read_buff[0];
-
-        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
-        Ok(())
     }
 
     pub async fn pcd_clear_register_bit_mask(
@@ -803,10 +699,12 @@ where
     ) -> Result<(), PCDErrorCode> {
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
+
         self.write_reg(PCDRegister::DivIrqReg, 0x04).await?;
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
         self.write_reg_buff(PCDRegister::FIFODataReg, length as usize, data)
             .await?;
+
         self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
             .await?;
 
@@ -824,6 +722,88 @@ where
         }
 
         Err(PCDErrorCode::Timeout)
+    }
+
+    pub async fn write_reg(&mut self, reg: u8, val: u8) -> Result<(), PCDErrorCode> {
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi_transfer(&[reg << 1]).await?;
+        self.spi_transfer(&[val]).await?;
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
+
+        Ok(())
+    }
+
+    pub async fn write_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        values: &[u8],
+    ) -> Result<(), PCDErrorCode> {
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi_transfer(&[reg << 1]).await?;
+
+        for i in 0..count {
+            self.spi_transfer(&[values[i]]).await?;
+        }
+
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
+        Ok(())
+    }
+
+    pub async fn read_reg(&mut self, reg: u8) -> Result<u8, PCDErrorCode> {
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi_transfer(&[(reg << 1) | 0x80]).await?;
+        self.spi_transfer(&[0]).await?;
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
+
+        Ok(self.read_buff[0])
+    }
+
+    pub async fn read_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        output_buff: &mut [u8],
+        rx_align: u8,
+    ) -> Result<(), PCDErrorCode> {
+        if count == 0 {
+            return Ok(());
+        }
+
+        let addr = 0x80 | (reg << 1);
+        let mut index = 0;
+
+        self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
+        self.spi_transfer(&[addr]).await?;
+
+        if rx_align > 0 {
+            let mask = (0xFF << rx_align) & 0xFF;
+            self.spi_transfer(&[addr]).await?;
+
+            output_buff[0] = (output_buff[0] & !mask) | (self.read_buff[0] & mask);
+            index += 1;
+        }
+
+        while index < count - 1 {
+            self.spi_transfer(&[addr]).await?;
+            output_buff[index] = self.read_buff[0];
+            index += 1;
+        }
+
+        self.spi_transfer(&[0]).await?;
+        output_buff[index] = self.read_buff[0];
+
+        self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
+        Ok(())
+    }
+
+    async fn spi_transfer(&mut self, data: &[u8]) -> Result<(), PCDErrorCode> {
+        self.spi
+            .transfer(&mut self.read_buff, data)
+            .await
+            .map_err(|_| PCDErrorCode::Unknown)?;
+
+        Ok(())
     }
 }
 
