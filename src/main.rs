@@ -108,7 +108,7 @@ async fn rfid_task(
         if mfrc522.picc_is_new_card_present().await.is_ok() {
             let card = mfrc522.get_card_uid_4b().await;
             info!("CARD IS PRESENT: {card:?}");
-            _ = mfrc522.picc_halta().await;
+            info!("halta_res: {:?}", mfrc522.picc_halta().await);
         }
 
         Timer::after(Duration::from_millis(100)).await;
@@ -270,18 +270,24 @@ where
         let mut void = [0; 16];
         let mut len_void = 0;
         let mut valid_bits_void = 0;
-        self.pcd_transceive_data(
-            &buff,
-            4,
-            &mut void,
-            &mut len_void,
-            &mut valid_bits_void,
-            0,
-            false,
-        )
-        .await?;
+        let res = self
+            .pcd_transceive_data(
+                &buff,
+                4,
+                &mut void,
+                &mut len_void,
+                &mut valid_bits_void,
+                0,
+                false,
+            )
+            .await;
 
-        Ok(())
+        // yes error timeout here is only Ok here
+        match res {
+            Ok(_) => Err(PCDErrorCode::Error),
+            Err(PCDErrorCode::Timeout) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn get_card_uid_4b(&mut self) -> Result<u32, PCDErrorCode> {
