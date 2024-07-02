@@ -1,7 +1,6 @@
 #![no_std]
 
 use consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, PICCCommand};
-use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::OutputPin;
 use heapless::String;
 
@@ -24,6 +23,8 @@ where
     spi: S,
     cs: C,
     read_buff: [u8; 1],
+
+    get_current_time: fn() -> u64,
 }
 
 impl<S, C> MFRC522<S, C>
@@ -31,11 +32,12 @@ where
     S: embedded_hal_async::spi::SpiBus,
     C: OutputPin,
 {
-    pub fn new(spi: S, cs: C) -> Self {
+    pub fn new(spi: S, cs: C, get_current_time: fn() -> u64) -> Self {
         Self {
             spi,
             cs,
             read_buff: [0],
+            get_current_time,
         }
     }
 
@@ -55,8 +57,9 @@ where
         self.write_reg(PCDRegister::ModeReg, 0x3D).await?;
 
         self.pcd_antenna_on().await?;
-        Timer::after(Duration::from_millis(4)).await;
 
+        let start_time = (self.get_current_time)(); // microseconds
+        while (self.get_current_time)() - start_time < 4_000 {}
         Ok(())
     }
 
@@ -76,6 +79,8 @@ where
     }
 
     pub async fn pcd_reset(&mut self) -> Result<(), PCDErrorCode> {
+        self.spi.flush().await.map_err(|_| PCDErrorCode::Unknown)?;
+
         self.write_reg(PCDRegister::CommandReg, PCDCommand::SoftReset)
             .await?;
 
@@ -89,7 +94,8 @@ where
                 }
             }
 
-            Timer::after(Duration::from_millis(50)).await;
+            let start_time = (self.get_current_time)(); // microseconds
+            while (self.get_current_time)() - start_time < 50_000 {}
         }
 
         Ok(())
@@ -146,8 +152,8 @@ where
         val &= !(1 << 4);
         self.write_reg(PCDRegister::CommandReg, val).await?;
 
-        let now = Instant::now();
-        while now.elapsed().as_millis() < 500 {
+        let start_time = (self.get_current_time)();
+        while (self.get_current_time)() - start_time < 500_000 {
             let val = self.read_reg(PCDRegister::CommandReg).await?;
             if val & (1 << 4) == 0 {
                 return Ok(());
@@ -582,14 +588,14 @@ where
                 .await?;
         }
 
-        let now = Instant::now();
+        let start_time = (self.get_current_time)();
         loop {
             let n = self.read_reg(PCDRegister::ComIrqReg).await?;
             if n & wait_irq != 0 {
                 break;
             }
 
-            if n & 0x01 != 0 || now.elapsed().as_millis() >= 36 {
+            if n & 0x01 != 0 || (self.get_current_time)() - start_time >= 36_000 {
                 return Err(PCDErrorCode::Timeout);
             }
         }
@@ -732,8 +738,8 @@ where
         self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
             .await?;
 
-        let now = Instant::now();
-        while now.elapsed().as_millis() < 89 {
+        let start_time = (self.get_current_time)();
+        while (self.get_current_time)() - start_time < 89_000 {
             let n = self.read_reg(PCDRegister::DivIrqReg).await?;
             if n & 0x04 != 0 {
                 self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)

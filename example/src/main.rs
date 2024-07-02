@@ -20,7 +20,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
     Async,
 };
-use log::{debug, info};
+use log::{debug, error, info};
 use static_cell::make_static;
 
 #[main]
@@ -84,13 +84,18 @@ async fn rfid_task(
     //spi.transfer(words)
     let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
-    let mut mfrc522 = mfrc522_esp_hal::MFRC522::new(spi, cs);
+    let mut mfrc522 =
+        mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
     debug!("is_pcd_init: {}", mfrc522.pcd_is_init().await);
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;
     debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
     debug!("is_pcd_init: {}", mfrc522.pcd_is_init().await);
+
+    if !mfrc522.pcd_is_init().await {
+        error!("MFRC522 init failed! Try to power cycle to module!");
+    }
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
@@ -99,7 +104,6 @@ async fn rfid_task(
             info!("halta_res: {:?}", mfrc522.picc_halta().await);
         }
 
-        //debug!("is_pcd_init: {}", mfrc522.pcd_is_init().await);
         Timer::after(Duration::from_millis(100)).await;
     }
 }
