@@ -99,13 +99,12 @@ async fn rfid_task(
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
             let card = mfrc522.get_card(4).await;
-            info!("CARD IS PRESENT: {card:?}");
             if let Ok(card) = card {
-                _ = mfrc522.debug_dump_card_details(&card).await;
-                _ = mfrc522.debug_dump_card_memory(&card).await;
-            } else {
-                info!("halta_res: {:?}", mfrc522.picc_halta().await);
+                info!("Card UID: {}", card.get_number());
+                _ = mfrc522.debug_dump_card(&card).await;
             }
+
+            _ = mfrc522.picc_halta().await;
         }
 
         Timer::after(Duration::from_millis(100)).await;

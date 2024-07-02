@@ -10,6 +10,7 @@ use heapless::String;
 
 #[allow(async_fn_in_trait)]
 pub trait MFRC522Debug {
+    async fn debug_dump_card(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
     async fn debug_dump_card_memory(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
     async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
 }
@@ -19,6 +20,14 @@ where
     S: embedded_hal_async::spi::SpiBus,
     C: OutputPin,
 {
+    async fn debug_dump_card(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
+        self.debug_dump_card_details(&uid).await?;
+        log::debug!("");
+        self.debug_dump_card_memory(&uid).await?;
+
+        Ok(())
+    }
+
     async fn debug_dump_card_memory(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         let picc_type = PICCType::from_sak(uid.sak);
 
