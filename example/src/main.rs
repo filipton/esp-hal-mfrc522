@@ -21,7 +21,7 @@ use esp_hal::{
     Async,
 };
 use log::{debug, error, info};
-use mfrc522_esp_hal::consts::PICCCommand;
+use mfrc522_esp_hal::debug::MFRC522Debug;
 use static_cell::make_static;
 
 #[main]
@@ -102,25 +102,11 @@ async fn rfid_task(
             info!("CARD IS PRESENT: {card:?}");
             if let Ok(card) = card {
                 let bytes: [u8; 4] = card.to_le_bytes();
-
-                let d = mfrc522
-                    .pcd_authenticate(
-                        PICCCommand::PICC_CMD_MF_AUTH_KEY_A,
-                        0,
-                        &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
-                        &bytes,
-                    )
-                    .await;
-
-                info!("auth_res: {:?}", d);
-
-                let mut buff = [0; 18];
-                let mut buff_size = 18;
-                let r = mfrc522.mifare_read(0, &mut buff, &mut buff_size).await;
-                info!("read_res: {:?} buff: {:?}", r, buff);
+                let res = mfrc522.dump_to_serial(&bytes).await;
+                debug!("DUMP TO SERIAL RES: {res:?}");
+            } else {
+                info!("halta_res: {:?}", mfrc522.picc_halta().await);
             }
-
-            info!("halta_res: {:?}", mfrc522.picc_halta().await);
         }
 
         Timer::after(Duration::from_millis(100)).await;

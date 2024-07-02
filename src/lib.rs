@@ -5,6 +5,8 @@ use embedded_hal::digital::OutputPin;
 use heapless::String;
 
 pub mod consts;
+pub mod debug;
+//pub use debug::*;
 
 /// assert return boolean (false)
 macro_rules! assert_rb {
