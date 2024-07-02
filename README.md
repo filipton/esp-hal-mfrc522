@@ -7,5 +7,5 @@ This project is just "port" of [this Arduino Library](https://github.com/OSSLibr
 - [x] PICC_Select for 4/7/10 byte UIDs
 - [x] Mifare auth
 - [x] Reading data
-- [ ] Writing data
-- [ ] All debug functions
+- [x] Writing data
+- [x] All debug functions

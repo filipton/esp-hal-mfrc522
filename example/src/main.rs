@@ -107,6 +107,6 @@ async fn rfid_task(
             _ = mfrc522.picc_halta().await;
         }
 
-        Timer::after(Duration::from_millis(100)).await;
+        Timer::after(Duration::from_millis(1)).await;
     }
 }
