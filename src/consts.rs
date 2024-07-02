@@ -133,7 +133,7 @@ impl PCDVersion {
 }
 */
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 #[allow(dead_code)]
 pub enum PCDVersion {
     Counterfeit = 0x12,
@@ -162,7 +162,7 @@ impl PCDVersion {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum PCDErrorCode {
     /// Error in communication
     Error,

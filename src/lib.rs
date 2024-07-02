@@ -7,6 +7,15 @@ use heapless::String;
 
 pub mod consts;
 
+/// assert return boolean (false)
+macro_rules! assert_rb {
+    ($expr:expr, $expected:expr) => {
+        if $expr != $expected {
+            return false;
+        }
+    };
+}
+
 pub struct MFRC522<S, C>
 where
     S: embedded_hal_async::spi::SpiBus,
@@ -49,6 +58,21 @@ where
         Timer::after(Duration::from_millis(4)).await;
 
         Ok(())
+    }
+
+    pub async fn pcd_is_init(&mut self) -> bool {
+        assert_rb!(self.read_reg(PCDRegister::TxModeReg).await, Ok(0x00));
+        assert_rb!(self.read_reg(PCDRegister::RxModeReg).await, Ok(0x00));
+        assert_rb!(self.read_reg(PCDRegister::ModWidthReg).await, Ok(0x26));
+
+        assert_rb!(self.read_reg(PCDRegister::TModeReg).await, Ok(0x80));
+        assert_rb!(self.read_reg(PCDRegister::TPrescalerReg).await, Ok(0xA9));
+        assert_rb!(self.read_reg(PCDRegister::TReloadRegH).await, Ok(0x03));
+        assert_rb!(self.read_reg(PCDRegister::TReloadRegL).await, Ok(0xE8));
+
+        assert_rb!(self.read_reg(PCDRegister::TxASKReg).await, Ok(0x40));
+        assert_rb!(self.read_reg(PCDRegister::ModeReg).await, Ok(0x3D));
+        true
     }
 
     pub async fn pcd_reset(&mut self) -> Result<(), PCDErrorCode> {
