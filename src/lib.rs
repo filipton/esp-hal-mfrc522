@@ -177,7 +177,7 @@ where
         key: &[u8],
         uid: &Uid,
     ) -> Result<(), PCDErrorCode> {
-        if key.len() != 6 || key.len() != 0xA {
+        if key.len() != 6 && key.len() != 0xA {
             return Err(PCDErrorCode::Invalid);
         }
 
