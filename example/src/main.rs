@@ -21,6 +21,7 @@ use esp_hal::{
     Async,
 };
 use log::{debug, error, info};
+use mfrc522_esp_hal::consts::PICCCommand;
 use static_cell::make_static;
 
 #[main]
@@ -81,17 +82,15 @@ async fn rfid_task(
     let cs = Output::new(cs, Level::High);
     let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0, &clocks);
     let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
-    //spi.transfer(words)
     let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
+    //mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
     let mut mfrc522 =
-        mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    debug!("is_pcd_init: {}", mfrc522.pcd_is_init().await);
+        mfrc522_esp_hal::MFRC522::new(spi, cs, || embassy_time::Instant::now().as_micros());
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;
     debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
-    debug!("is_pcd_init: {}", mfrc522.pcd_is_init().await);
 
     if !mfrc522.pcd_is_init().await {
         error!("MFRC522 init failed! Try to power cycle to module!");
@@ -101,6 +100,26 @@ async fn rfid_task(
         if mfrc522.picc_is_new_card_present().await.is_ok() {
             let card = mfrc522.get_card_uid_4b().await;
             info!("CARD IS PRESENT: {card:?}");
+            if let Ok(card) = card {
+                let bytes: [u8; 4] = card.to_le_bytes();
+
+                let d = mfrc522
+                    .pcd_authenticate(
+                        PICCCommand::PICC_CMD_MF_AUTH_KEY_A,
+                        0,
+                        &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+                        &bytes,
+                    )
+                    .await;
+
+                info!("auth_res: {:?}", d);
+
+                let mut buff = [0; 18];
+                let mut buff_size = 18;
+                let r = mfrc522.mifare_read(0, &mut buff, &mut buff_size).await;
+                info!("read_res: {:?} buff: {:?}", r, buff);
+            }
+
             info!("halta_res: {:?}", mfrc522.picc_halta().await);
         }
 

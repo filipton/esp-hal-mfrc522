@@ -168,6 +168,44 @@ where
             .await
     }
 
+    /// Key - 6 bytes
+    /// Uid - 4 bytes (last 4 bytes)
+    pub async fn pcd_authenticate(
+        &mut self,
+        cmd: u8,
+        block_addr: u8,
+        key: &[u8],
+        uid: &[u8],
+    ) -> Result<(), PCDErrorCode> {
+        if key.len() != 6 || uid.len() != 4 {
+            return Err(PCDErrorCode::Invalid);
+        }
+
+        let wait_irq = 0x10;
+        let mut send_data = [0; 12];
+        send_data[0] = cmd;
+        send_data[1] = block_addr;
+        send_data[2..8].copy_from_slice(&key);
+        send_data[8..12].copy_from_slice(&uid);
+
+        // TODO: make sth to be able not to specify back buffers etc
+        let mut void_buf = [0; 1];
+        let mut void_size = 0;
+        let mut void_valid_bits = 0;
+        self.pcd_communicate_with_picc(
+            PCDCommand::MFAuthent,
+            wait_irq,
+            &send_data,
+            12,
+            &mut void_buf,
+            &mut void_size,
+            &mut void_valid_bits,
+            0,
+            false,
+        )
+        .await
+    }
+
     pub async fn pcd_mifare_transceive(
         &mut self,
         send_data: &[u8],
@@ -227,6 +265,31 @@ where
         }
 
         Ok(())
+    }
+
+    pub async fn mifare_read(
+        &mut self,
+        block_addr: u8,
+        buff: &mut [u8],
+        buff_size: &mut u8,
+    ) -> Result<(), PCDErrorCode> {
+        if *buff_size < 18 {
+            return Err(PCDErrorCode::NoRoom);
+        }
+
+        buff[0] = PICCCommand::PICC_CMD_MF_READ;
+        buff[1] = block_addr;
+
+        let mut tmp_buff = [0; 2];
+        tmp_buff.copy_from_slice(&buff[..2]);
+        self.pcd_calc_crc(&tmp_buff, 2, &mut buff[2..]).await?;
+
+        let mut tmp_buff = [0; 4];
+        tmp_buff.copy_from_slice(&buff[..4]);
+
+        let mut void_valid_bits = 0;
+        self.pcd_transceive_data(&tmp_buff, 4, buff, buff_size, &mut void_valid_bits, 0, true)
+            .await
     }
 
     pub async fn picc_is_new_card_present(&mut self) -> Result<(), PCDErrorCode> {
