@@ -24,11 +24,17 @@ where
             | PICCType::PiccTypeMifare4K
             | PICCType::PiccTypeMifareMini => {
                 let mifare_key = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
-                dump_mifare_classic(self, uid, &mifare_key, picc_type).await?;
+                let res = dump_mifare_classic(self, uid, &mifare_key, picc_type).await;
+                if let Err(e) = res {
+                    log::error!("Dump mifare classic failed: {e:?}");
+                }
             }
-
-            PICCType::PiccTypeMifareUL => {}
-
+            PICCType::PiccTypeMifareUL => {
+                let res = dump_mifare_ultralight(self).await;
+                if let Err(e) = res {
+                    log::error!("Dump mifare ultralight failed: {e:?}");
+                }
+            }
             PICCType::PiccTypeUnknown | PICCType::PiccTypeNotComplete => {
                 return Ok(());
             }
@@ -178,5 +184,34 @@ async fn dump_mifare_classic_sector<S: SpiBus, C: OutputPin>(
         log::debug!("{}", dbg_line_buff);
     }
 
+    Ok(())
+}
+
+async fn dump_mifare_ultralight<S: SpiBus, C: OutputPin>(
+    mfrc522: &mut MFRC522<S, C>,
+) -> Result<(), PCDErrorCode> {
+    let mut buff = [0; 18];
+    let mut i = 0;
+
+    log::debug!("Page  0  1  2  3");
+    let mut dbg_line_buff: String<128> = String::new();
+    for page in (0..16).step_by(4) {
+        let mut bytes_count = 18;
+        mfrc522
+            .mifare_read(page, &mut buff, &mut bytes_count)
+            .await?;
+
+        for offset in 0..4 {
+            i = page + offset;
+            _ = core::fmt::write(&mut dbg_line_buff, format_args!(" {i: >2}  "));
+
+            for index in 0..4 {
+                i = 4 * offset + index;
+                _ = core::fmt::write(&mut dbg_line_buff, format_args!(" {i:02x}  "));
+            }
+        }
+    }
+
+    log::debug!("{}", dbg_line_buff);
     Ok(())
 }
