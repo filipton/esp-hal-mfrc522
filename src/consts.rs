@@ -1,5 +1,12 @@
 // FROM: https://github.com/OSSLibraries/Arduino_MFRC522v2/blob/master/src/MFRC522Constants.h
 
+#[derive(Debug, Clone)]
+pub struct Uid {
+    pub size: u8,
+    pub uid_bytes: [u8; 10],
+    pub sak: u8,
+}
+
 pub struct PCDRegister;
 pub struct PCDCommand;
 pub struct PICCCommand;
@@ -144,6 +151,41 @@ impl PCDVersion {
             0x91 => PCDVersion::Version1_0,
             0x92 => PCDVersion::Version2_0,
             _ => PCDVersion::VersionUnknown,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+pub enum PICCType {
+    PiccTypeUnknown = 0xff,
+    PiccTypeIso14443_4 = 0x20, // PICC compliant with ISO/IEC 14443-4.
+    PiccTypeIso18092 = 0x40,   // PICC compliant with ISO/IEC 18092 (NFC).
+    PiccTypeMifareMini = 0x09, // MIFARE Classic protocol, 320 bytes.
+    PiccTypeMifare1K = 0x08,   // MIFARE Classic protocol, 1KB.
+    PiccTypeMifare4K = 0x18,   // MIFARE Classic protocol, 4KB.
+    PiccTypeMifareUL = 0x00,   // MIFARE Ultralight or Ultralight C.
+    PiccTypeMifarePlus = 0x10 | 0x11, // MIFARE Plus.
+    PiccTypeMifareDesfire,     // MIFARE DESFire.
+    PiccTypeTnp3XXX = 0x01, // Only mentioned in NXP AN 10833 MIFARE Type Identification Procedure.
+    PiccTypeNotComplete = 0x04, // SAK indicates UID is not complete.
+}
+
+impl PICCType {
+    pub fn from_sak(sak: u8) -> Self {
+        let sak = sak & 0x7F;
+
+        match sak {
+            0x20 => PICCType::PiccTypeIso14443_4,
+            0x40 => PICCType::PiccTypeIso18092,
+            0x09 => PICCType::PiccTypeMifareMini,
+            0x08 => PICCType::PiccTypeMifare1K,
+            0x18 => PICCType::PiccTypeMifare4K,
+            0x00 => PICCType::PiccTypeMifareUL,
+            0x10 | 0x11 => PICCType::PiccTypeMifarePlus,
+            0x01 => PICCType::PiccTypeTnp3XXX,
+            0x04 => PICCType::PiccTypeNotComplete,
+            _ => PICCType::PiccTypeUnknown,
         }
     }
 }

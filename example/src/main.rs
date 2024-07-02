@@ -98,12 +98,14 @@ async fn rfid_task(
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
-            let card = mfrc522.get_card_uid_4b().await;
+            let card = mfrc522.get_card(4).await;
             info!("CARD IS PRESENT: {card:?}");
             if let Ok(card) = card {
+                /*
                 let bytes: [u8; 4] = card.to_le_bytes();
                 let res = mfrc522.dump_to_serial(&bytes).await;
                 debug!("DUMP TO SERIAL RES: {res:?}");
+                */
             } else {
                 info!("halta_res: {:?}", mfrc522.picc_halta().await);
             }

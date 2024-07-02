@@ -1,12 +1,12 @@
 use crate::{
-    consts::{PCDErrorCode, PICCCommand},
+    consts::{PCDErrorCode, PICCCommand, Uid},
     MFRC522,
 };
 use embedded_hal::digital::OutputPin;
 
 #[allow(async_fn_in_trait)]
 pub trait MFRC522Debug {
-    async fn dump_to_serial(&mut self, uid: &[u8]) -> Result<(), PCDErrorCode>;
+    async fn dump_to_serial(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
 }
 
 impl<S, C> MFRC522Debug for MFRC522<S, C>
@@ -14,12 +14,9 @@ where
     S: embedded_hal_async::spi::SpiBus,
     C: OutputPin,
 {
-    async fn dump_to_serial(&mut self, uid: &[u8]) -> Result<(), PCDErrorCode> {
+    async fn dump_to_serial(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         // for now only works onm MIFARE_1k
         // TODO: implement the rest
-        if uid.len() != 4 {
-            return Err(PCDErrorCode::Invalid);
-        }
 
         let key = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let no_of_sectors = 16; // mifare 1k

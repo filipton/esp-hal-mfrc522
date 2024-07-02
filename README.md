@@ -5,5 +5,7 @@ This project is just "port" of [this Arduino Library](https://github.com/OSSLibr
 ## What works
 - [x] SPI communication
 - [x] PICC_Select for 4/7/10 byte UIDs
-- [ ] Mifare auth
-- [ ] Reading/writing data
+- [x] Mifare auth
+- [x] Reading data
+- [ ] Writing data
+- [ ] All debug functions

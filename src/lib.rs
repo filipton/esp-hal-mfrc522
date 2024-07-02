@@ -1,12 +1,11 @@
 #![no_std]
 
-use consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, PICCCommand};
+use consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, PICCCommand, Uid};
 use embedded_hal::digital::OutputPin;
 use heapless::String;
 
 pub mod consts;
 pub mod debug;
-//pub use debug::*;
 
 /// assert return boolean (false)
 macro_rules! assert_rb {
@@ -171,15 +170,14 @@ where
     }
 
     /// Key - 6 bytes
-    /// Uid - 4 bytes (last 4 bytes)
     pub async fn pcd_authenticate(
         &mut self,
         cmd: u8,
         block_addr: u8,
         key: &[u8],
-        uid: &[u8],
+        uid: &Uid,
     ) -> Result<(), PCDErrorCode> {
-        if key.len() != 6 || uid.len() != 4 {
+        if key.len() != 6 || key.len() != 0xA {
             return Err(PCDErrorCode::Invalid);
         }
 
@@ -188,7 +186,8 @@ where
         send_data[0] = cmd;
         send_data[1] = block_addr;
         send_data[2..8].copy_from_slice(&key);
-        send_data[8..12].copy_from_slice(&uid);
+        send_data[8..12]
+            .copy_from_slice(&uid.uid_bytes[(uid.size as usize - 4)..(uid.size as usize)]);
 
         // TODO: make sth to be able not to specify back buffers etc
         let mut void_buf = [0; 1];
@@ -337,34 +336,23 @@ where
         }
     }
 
-    pub async fn get_card_uid_4b(&mut self) -> Result<u32, PCDErrorCode> {
-        let res = self.picc_select(4, [0; 10], 0).await?;
-        Ok(u32::from_le_bytes([res[0], res[1], res[2], res[3]]))
+    /// bytes is 4, 7 or 10
+    pub async fn get_card(&mut self, bytes: u8) -> Result<Uid, PCDErrorCode> {
+        if bytes != 4 && bytes != 7 && bytes != 10 {
+            return Err(PCDErrorCode::Invalid);
+        }
+
+        let mut uid = Uid {
+            size: bytes,
+            sak: 0,
+            uid_bytes: [0; 10],
+        };
+
+        self.picc_select(&mut uid, 0).await?;
+        Ok(uid)
     }
 
-    pub async fn get_card_uid_7b(&mut self) -> Result<u64, PCDErrorCode> {
-        let res = self.picc_select(7, [0; 10], 0).await?;
-        Ok(u64::from_le_bytes([
-            res[0], res[1], res[2], res[3], res[4], res[5], res[6], 0,
-        ]))
-    }
-
-    pub async fn get_card_uid_10b(&mut self) -> Result<u128, PCDErrorCode> {
-        let res = self.picc_select(4, [0; 10], 0).await?;
-        Ok(u128::from_le_bytes([
-            res[0], res[1], res[2], res[3], res[4], res[5], res[6], res[7], res[8], res[9], 0, 0,
-            0, 0, 0, 0,
-        ]))
-    }
-
-    pub async fn picc_select(
-        &mut self,
-        uid_bytes_count: u8,
-        known_uid_bytes: [u8; 10],
-        valid_bits: u8,
-    ) -> Result<[u8; 10], PCDErrorCode> {
-        let mut uid_bytes = [0; 10];
-
+    pub async fn picc_select(&mut self, uid: &mut Uid, valid_bits: u8) -> Result<(), PCDErrorCode> {
         let mut uid_complete = false;
         let mut use_casdcade_tag;
         let mut cascade_level = 1u8;
@@ -392,12 +380,12 @@ where
                 1 => {
                     buff[0] = PICCCommand::PICC_CMD_SEL_CL1;
                     uid_index = 0;
-                    use_casdcade_tag = valid_bits != 0 && (uid_bytes_count > 4);
+                    use_casdcade_tag = valid_bits != 0 && (uid.size > 4);
                 }
                 2 => {
                     buff[0] = PICCCommand::PICC_CMD_SEL_CL2;
                     uid_index = 3;
-                    use_casdcade_tag = valid_bits != 0 && (uid_bytes_count > 7);
+                    use_casdcade_tag = valid_bits != 0 && (uid.size > 7);
                 }
                 3 => {
                     buff[0] = PICCCommand::PICC_CMD_SEL_CL3;
@@ -430,7 +418,7 @@ where
                 }
 
                 for count in 0..bytes_to_copy as usize {
-                    buff[index as usize] = known_uid_bytes[uid_index as usize + count];
+                    buff[index as usize] = uid.uid_bytes[uid_index as usize + count];
                     index += 1;
                 }
             }
@@ -518,7 +506,7 @@ where
             let bytes_to_copy = tif(buff[2] == PICCCommand::PICC_CMD_CT, 3, 4);
 
             for i in 0..bytes_to_copy {
-                uid_bytes[uid_index as usize + i] = buff[index as usize];
+                uid.uid_bytes[uid_index as usize + i] = buff[index as usize];
                 index += 1;
             }
 
@@ -539,10 +527,11 @@ where
                 cascade_level += 1;
             } else {
                 uid_complete = true;
+                uid.sak = buff[response_buff_ptr as usize + 0];
             }
         }
 
-        Ok(uid_bytes)
+        Ok(())
     }
 
     pub async fn picc_wakeup_a(
