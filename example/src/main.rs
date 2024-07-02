@@ -101,8 +101,8 @@ async fn rfid_task(
             let card = mfrc522.get_card(4).await;
             info!("CARD IS PRESENT: {card:?}");
             if let Ok(card) = card {
-                let res = mfrc522.debug_dump_card_memory(&card).await;
-                debug!("DUMP TO SERIAL RES: {res:?}");
+                _ = mfrc522.debug_dump_card_details(&card).await;
+                _ = mfrc522.debug_dump_card_memory(&card).await;
             } else {
                 info!("halta_res: {:?}", mfrc522.picc_halta().await);
             }

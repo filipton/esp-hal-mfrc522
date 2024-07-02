@@ -1,3 +1,5 @@
+use core::fmt::Write;
+
 use crate::{
     consts::{PCDErrorCode, PICCCommand, PICCType, Uid},
     MFRC522,
@@ -9,6 +11,7 @@ use heapless::String;
 #[allow(async_fn_in_trait)]
 pub trait MFRC522Debug {
     async fn debug_dump_card_memory(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
+    async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
 }
 
 impl<S, C> MFRC522Debug for MFRC522<S, C>
@@ -44,6 +47,19 @@ where
         }
 
         self.picc_halta().await?;
+        Ok(())
+    }
+
+    async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
+        let mut dbg_line_buff: String<32> = String::new();
+        for i in 0..uid.size {
+            _ = dbg_line_buff.write_fmt(format_args!(" {:02X}", uid.uid_bytes[i as usize]));
+        }
+
+        log::debug!("Card UID:{dbg_line_buff}");
+        log::debug!("Card SAK: 0x{:02X}", uid.sak);
+        log::debug!("PICC Type: {:?}", PICCType::from_sak(uid.sak));
+
         Ok(())
     }
 }
@@ -108,12 +124,12 @@ async fn dump_mifare_classic_sector<S: SpiBus, C: OutputPin>(
                 .pcd_authenticate(PICCCommand::PICC_CMD_MF_AUTH_KEY_A, first_block, &key, &uid)
                 .await?;
 
-            _ = core::fmt::write(&mut dbg_line_buff, format_args!("  {sector: >2}    "));
+            _ = dbg_line_buff.write_fmt(format_args!("  {sector: >2}    "));
         } else {
             _ = dbg_line_buff.push_str("        ");
         }
 
-        _ = core::fmt::write(&mut dbg_line_buff, format_args!("{block_addr: >3}   "));
+        _ = dbg_line_buff.write_fmt(format_args!("{block_addr: >3}   "));
 
         let mut byte_count = 18;
         mfrc522
@@ -121,8 +137,7 @@ async fn dump_mifare_classic_sector<S: SpiBus, C: OutputPin>(
             .await?;
 
         for i in 0..16 {
-            _ = core::fmt::write(&mut dbg_line_buff, format_args!("{:02x} ", buff[i]));
-
+            _ = dbg_line_buff.write_fmt(format_args!("{:02X} ", buff[i]));
             if i % 4 == 3 {
                 _ = dbg_line_buff.push(' ');
             }
@@ -175,10 +190,7 @@ async fn dump_mifare_classic_sector<S: SpiBus, C: OutputPin>(
                 | ((buff[1] as i32) << 8)
                 | (buff[0] as i32);
 
-            _ = core::fmt::write(
-                &mut dbg_line_buff,
-                format_args!(" Value=0x{val:x} Adr=0x{:x}", buff[12]),
-            );
+            _ = dbg_line_buff.write_fmt(format_args!(" Value=0x{val:X} Adr=0x{:X}", buff[12]));
         }
 
         log::debug!("{}", dbg_line_buff);
@@ -191,11 +203,13 @@ async fn dump_mifare_ultralight<S: SpiBus, C: OutputPin>(
     mfrc522: &mut MFRC522<S, C>,
 ) -> Result<(), PCDErrorCode> {
     let mut buff = [0; 18];
-    let mut i = 0;
+    let mut i;
 
     log::debug!("Page  0  1  2  3");
     let mut dbg_line_buff: String<128> = String::new();
     for page in (0..16).step_by(4) {
+        dbg_line_buff.clear();
+
         let mut bytes_count = 18;
         mfrc522
             .mifare_read(page, &mut buff, &mut bytes_count)
@@ -203,15 +217,16 @@ async fn dump_mifare_ultralight<S: SpiBus, C: OutputPin>(
 
         for offset in 0..4 {
             i = page + offset;
-            _ = core::fmt::write(&mut dbg_line_buff, format_args!(" {i: >2}  "));
+            _ = dbg_line_buff.write_fmt(format_args!(" {i: >2}  "));
 
             for index in 0..4 {
                 i = 4 * offset + index;
-                _ = core::fmt::write(&mut dbg_line_buff, format_args!(" {i:02x}  "));
+                _ = dbg_line_buff.write_fmt(format_args!(" {i:02X}  "));
             }
         }
+
+        log::debug!("{}", dbg_line_buff);
     }
 
-    log::debug!("{}", dbg_line_buff);
     Ok(())
 }
