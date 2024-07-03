@@ -15,6 +15,14 @@ pub trait MFRC522Debug {
     async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
 }
 
+impl<S, C> MFRC522<S, C>
+where
+    S: embedded_hal_async::spi::SpiBus,
+    C: OutputPin,
+{
+    pub async fn test(&mut self) {}
+}
+
 impl<S, C> MFRC522Debug for MFRC522<S, C>
 where
     S: embedded_hal_async::spi::SpiBus,
