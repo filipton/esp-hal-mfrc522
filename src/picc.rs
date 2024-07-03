@@ -28,20 +28,9 @@ where
         buff[0] = PICCCommand::PICC_CMD_HLTA;
         buff[1] = 0;
 
-        self.pcd_calc_crc(&buff.clone(), 2, &mut buff[2..]).await?;
-        let mut void = [0; 16];
-        let mut len_void = 0;
-        let mut valid_bits_void = 0;
+        self.pcd_calc_crc_single_buf(&mut buff, 2, 2).await?;
         let res = self
-            .pcd_transceive_data(
-                &buff,
-                4,
-                &mut void,
-                &mut len_void,
-                &mut valid_bits_void,
-                0,
-                false,
-            )
+            .pcd_transceive_data(&buff, 4, &mut [], &mut 0, &mut 0, 0, false)
             .await;
 
         // yes error timeout here is only Ok here
@@ -133,7 +122,7 @@ where
                     buff[1] = 0x70;
                     buff[6] = buff[2] ^ buff[3] ^ buff[4] ^ buff[5];
 
-                    self.pcd_calc_crc(&buff.clone(), 7, &mut buff[7..]).await?;
+                    self.pcd_calc_crc_single_buf(&mut buff, 7, 7).await?;
 
                     tx_last_bits = 0;
                     buffer_used = 9;

@@ -30,8 +30,7 @@ where
         let mut tmp_buff = [0; 4];
         tmp_buff.copy_from_slice(&buff[..4]);
 
-        let mut void_valid_bits = 0;
-        self.pcd_transceive_data(&tmp_buff, 4, buff, buff_size, &mut void_valid_bits, 0, true)
+        self.pcd_transceive_data(&tmp_buff, 4, buff, buff_size, &mut 0, 0, true)
             .await
     }
 

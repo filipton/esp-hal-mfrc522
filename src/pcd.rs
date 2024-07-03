@@ -58,7 +58,6 @@ where
 
     pub async fn pcd_reset(&mut self) -> Result<(), PCDErrorCode> {
         self.spi.flush().await.map_err(|_| PCDErrorCode::Unknown)?;
-
         self.write_reg(PCDRegister::CommandReg, PCDCommand::SoftReset)
             .await?;
 
@@ -166,18 +165,14 @@ where
         send_data[8..12]
             .copy_from_slice(&uid.uid_bytes[(uid.size as usize - 4)..(uid.size as usize)]);
 
-        // TODO: make sth to be able not to specify back buffers etc
-        let mut void_buf = [0; 1];
-        let mut void_size = 0;
-        let mut void_valid_bits = 0;
         self.pcd_communicate_with_picc(
             PCDCommand::MFAuthent,
             wait_irq,
             &send_data,
             12,
-            &mut void_buf,
-            &mut void_size,
-            &mut void_valid_bits,
+            &mut [],
+            &mut 0,
+            &mut 0,
             0,
             false,
         )
@@ -197,7 +192,7 @@ where
 
         cmd_buff[..send_len as usize].copy_from_slice(&send_data[..send_len as usize]);
         self.pcd_calc_crc(
-            &cmd_buff.clone(), // i cant make it like in C :(
+            &send_data[..send_len as usize],
             send_len,
             &mut cmd_buff[send_len as usize..],
         )
@@ -250,8 +245,7 @@ where
         cmd_buff[0] = 0x1B;
         cmd_buff[1..5].copy_from_slice(&password);
 
-        self.pcd_calc_crc(&cmd_buff.clone(), 5, &mut cmd_buff[5..])
-            .await?;
+        self.pcd_calc_crc_single_buf(&mut cmd_buff, 5, 5).await?;
 
         let wait_irq = 0x30;
         let mut valid_bits = 0;
@@ -490,6 +484,40 @@ where
 
                 res[0] = self.read_reg(PCDRegister::CRCResultRegL).await?;
                 res[1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
+                return Ok(());
+            }
+        }
+
+        Err(PCDErrorCode::Timeout)
+    }
+
+    /// This function is to prevent unnesecary clones
+    pub async fn pcd_calc_crc_single_buf(
+        &mut self,
+        data: &mut [u8],
+        length: u8,
+        out_offset: usize,
+    ) -> Result<(), PCDErrorCode> {
+        self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
+            .await?;
+
+        self.write_reg(PCDRegister::DivIrqReg, 0x04).await?;
+        self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
+        self.write_reg_buff(PCDRegister::FIFODataReg, length as usize, data)
+            .await?;
+
+        self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
+            .await?;
+
+        let start_time = (self.get_current_time)();
+        while (self.get_current_time)() - start_time < 89_000 {
+            let n = self.read_reg(PCDRegister::DivIrqReg).await?;
+            if n & 0x04 != 0 {
+                self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
+                    .await?;
+
+                data[out_offset + 0] = self.read_reg(PCDRegister::CRCResultRegL).await?;
+                data[out_offset + 1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
                 return Ok(());
             }
         }

@@ -241,3 +241,19 @@ pub enum PCDErrorCode {
     /// MIFARE PICC responded with NAK
     MifareNack,
 }
+
+pub enum UidSize {
+    Four,
+    Seven,
+    Ten,
+}
+
+impl UidSize {
+    pub fn to_byte(&self) -> u8 {
+        match self {
+            Self::Four => 4,
+            Self::Seven => 7,
+            Self::Ten => 10,
+        }
+    }
+}

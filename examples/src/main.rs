@@ -21,7 +21,7 @@ use esp_hal::{
     Async,
 };
 use log::{debug, error, info};
-use mfrc522_esp_hal::debug::MFRC522Debug;
+use mfrc522_esp_hal::{consts::UidSize, debug::MFRC522Debug};
 use static_cell::make_static;
 
 #[main]
@@ -98,7 +98,7 @@ async fn rfid_task(
 
     loop {
         if mfrc522.picc_is_new_card_present().await.is_ok() {
-            let card = mfrc522.get_card(4).await;
+            let card = mfrc522.get_card(UidSize::Four).await;
             if let Ok(card) = card {
                 info!("Card UID: {}", card.get_number());
                 _ = mfrc522.debug_dump_card(&card).await;

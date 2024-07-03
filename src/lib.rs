@@ -1,6 +1,6 @@
 #![no_std]
 
-use consts::{PCDErrorCode, Uid};
+use consts::{PCDErrorCode, Uid, UidSize};
 use embedded_hal::digital::OutputPin;
 
 pub mod consts;
@@ -35,14 +35,9 @@ where
         }
     }
 
-    /// bytes is 4, 7 or 10
-    pub async fn get_card(&mut self, bytes: u8) -> Result<Uid, PCDErrorCode> {
-        if bytes != 4 && bytes != 7 && bytes != 10 {
-            return Err(PCDErrorCode::Invalid);
-        }
-
+    pub async fn get_card(&mut self, size: UidSize) -> Result<Uid, PCDErrorCode> {
         let mut uid = Uid {
-            size: bytes,
+            size: size.to_byte(),
             sak: 0,
             uid_bytes: [0; 10],
         };
