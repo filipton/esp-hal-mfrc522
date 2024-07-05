@@ -22,7 +22,7 @@ heapless = "0.8.0"
 log = { version = "0.4.21" }
 static_cell = { version = "2.1.0", features = ["nightly"] }
 
-mfrc522-esp-hal = { path = "../" }
+mfrc522-esp-hal = { path = "../", features = ["embassy-time"] }
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization

@@ -36,8 +36,7 @@ where
 
         self.pcd_antenna_on().await?;
 
-        let start_time = (self.get_current_time)(); // microseconds
-        while (self.get_current_time)() - start_time < 4_000 {}
+        self.sleep(4).await;
         Ok(())
     }
 
@@ -71,8 +70,7 @@ where
                 }
             }
 
-            let start_time = (self.get_current_time)(); // microseconds
-            while (self.get_current_time)() - start_time < 50_000 {}
+            self.sleep(50).await;
         }
 
         Ok(())

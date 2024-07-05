@@ -85,8 +85,9 @@ async fn rfid_task(
     let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
 
     //mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    let mut mfrc522 =
-        mfrc522_esp_hal::MFRC522::new(spi, cs, || embassy_time::Instant::now().as_micros());
+    let mut mfrc522 = mfrc522_esp_hal::MFRC522::new(spi, cs); // embassy-time feature is enabled,
+                                                              // so no need to pass current_time
+                                                              // function 
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;

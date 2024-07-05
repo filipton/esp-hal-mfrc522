@@ -26,6 +26,7 @@ where
     S: embedded_hal_async::spi::SpiBus,
     C: OutputPin,
 {
+    #[cfg(not(feature = "embassy-time"))]
     pub fn new(spi: S, cs: C, get_current_time: fn() -> u64) -> Self {
         Self {
             spi,
@@ -33,6 +34,28 @@ where
             read_buff: [0],
             get_current_time,
         }
+    }
+
+    #[cfg(feature = "embassy-time")]
+    pub fn new(spi: S, cs: C) -> Self {
+        Self {
+            spi,
+            cs,
+            read_buff: [0],
+
+            get_current_time: || embassy_time::Instant::now().as_micros(),
+        }
+    }
+
+    #[cfg(not(feature = "embassy-time"))]
+    pub async fn sleep(&self, time_ms: u64) {
+        let start_time = (self.get_current_time)(); // microseconds
+        while (self.get_current_time)() - start_time < time_ms * 1_000 {}
+    }
+
+    #[cfg(feature = "embassy-time")]
+    pub async fn sleep(&self, time_ms: u64) {
+        embassy_time::Timer::after_millis(time_ms).await;
     }
 
     pub async fn get_card(&mut self, size: UidSize) -> Result<Uid, PCDErrorCode> {
