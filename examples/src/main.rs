@@ -17,24 +17,41 @@ use esp_hal::{
         FullDuplexMode, SpiMode,
     },
     system::SystemControl,
-    timer::timg::TimerGroup,
+    timer::{timg::TimerGroup, ErasedTimer, OneShotTimer},
     Async,
 };
 use log::{debug, error, info};
 use mfrc522_esp_hal::{consts::UidSize, debug::MFRC522Debug};
 use static_cell::make_static;
 
+macro_rules! mk_static {
+    ($t:ty,$val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        #[deny(unused_attributes)]
+        let x = STATIC_CELL.uninit().write(($val));
+        x
+    }};
+}
+
 #[main]
 async fn main(_spawner: Spawner) {
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
-    let clocks = ClockControl::max(system.clock_control).freeze();
+    let clocks =
+        ClockControl::configure(system.clock_control, esp_hal::clock::CpuClock::Clock80MHz)
+            .freeze();
+
+    //let clocks = ClockControl::max(system.clock_control).freeze();
     let clocks = &*make_static!(clocks);
 
     esp_println::logger::init_logger_from_env();
 
-    let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
-    esp_hal_embassy::init(&clocks, timg0);
+    let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks, None);
+    let timers = mk_static!(
+        [OneShotTimer<ErasedTimer>; 1],
+        [OneShotTimer::new(timg0.timer0.into())]
+    );
+    esp_hal_embassy::init(&clocks, timers);
     log::set_max_level(log::LevelFilter::Trace);
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
@@ -71,23 +88,19 @@ async fn rfid_task(
 ) {
     let dma = Dma::new(dma);
     let dma_chan = dma.channel0;
-    let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
-    let dma_chan = dma_chan.configure_for_async(
-        false,
-        &mut descriptors,
-        &mut rx_descriptors,
-        esp_hal::dma::DmaPriority::Priority0,
-    );
+    let (descriptors, rx_descriptors) = dma_descriptors!(32000);
+    let dma_chan = dma_chan.configure_for_async(false, esp_hal::dma::DmaPriority::Priority0);
 
     let cs = Output::new(cs, Level::High);
     let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0, &clocks);
     let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
-    let spi: SpiDma<SPI3, _, FullDuplexMode, Async> = spi.with_dma(dma_chan);
+    let spi: SpiDma<SPI3, _, FullDuplexMode, Async> =
+        spi.with_dma(dma_chan, descriptors, rx_descriptors);
 
     //mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
     let mut mfrc522 = mfrc522_esp_hal::MFRC522::new(spi, cs); // embassy-time feature is enabled,
                                                               // so no need to pass current_time
-                                                              // function 
+                                                              // function
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;

@@ -16,13 +16,18 @@ esp-backtrace = { version = "0.12.0", features = [
     "println",
 ] }
 esp-hal = { version = "0.18.0", features = [ "esp32s3", "async", "embedded-hal" ] }
-esp-hal-embassy = { version = "0.1.0", features = ["esp32s3", "time-timg0", "integrated-timers"] }
+esp-hal-embassy = { version = "0.1.0", features = ["esp32s3", "integrated-timers"] }
 esp-println = { version = "0.9.1", features = ["esp32s3", "log"] }
 heapless = "0.8.0"
 log = { version = "0.4.21" }
 static_cell = { version = "2.1.0", features = ["nightly"] }
 
 mfrc522-esp-hal = { path = "../", features = ["embassy-time"] }
+
+[patch.crates-io]
+esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "2bef914e7c01b5ea598bff79caa4d4b3f0f99faa", package = "esp-hal" } 
+esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal.git", rev = "2bef914e7c01b5ea598bff79caa4d4b3f0f99faa", package = "esp-hal-embassy" } 
+
 [profile.dev]
 # Rust debug is too slow.
 # For debug builds always builds with some optimization
