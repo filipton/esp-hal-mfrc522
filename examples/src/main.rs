@@ -17,40 +17,24 @@ use esp_hal::{
         FullDuplexMode, SpiMode,
     },
     system::SystemControl,
-    timer::{timg::TimerGroup, ErasedTimer, OneShotTimer},
+    timer::{timg::TimerGroup, OneShotTimer},
     Async,
 };
 use log::{debug, error, info};
 use mfrc522_esp_hal::{consts::UidSize, debug::MFRC522Debug};
 use static_cell::make_static;
 
-macro_rules! mk_static {
-    ($t:ty,$val:expr) => {{
-        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
-        #[deny(unused_attributes)]
-        let x = STATIC_CELL.uninit().write(($val));
-        x
-    }};
-}
-
 #[main]
 async fn main(_spawner: Spawner) {
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
-    let clocks =
-        ClockControl::configure(system.clock_control, esp_hal::clock::CpuClock::Clock80MHz)
-            .freeze();
-
-    //let clocks = ClockControl::max(system.clock_control).freeze();
+    let clocks = ClockControl::max(system.clock_control).freeze();
     let clocks = &*make_static!(clocks);
 
     esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks, None);
-    let timers = mk_static!(
-        [OneShotTimer<ErasedTimer>; 1],
-        [OneShotTimer::new(timg0.timer0.into())]
-    );
+    let timers = make_static!([OneShotTimer::new(timg0.timer0.into())]);
     esp_hal_embassy::init(&clocks, timers);
     log::set_max_level(log::LevelFilter::Trace);
 
