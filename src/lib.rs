@@ -96,9 +96,11 @@ where
     }
 
     pub async fn read_reg(&mut self, reg: u8) -> Result<u8, PCDErrorCode> {
+        let zero_buf = [0];
+
         self.cs.set_low().map_err(|_| PCDErrorCode::Unknown)?;
         self.spi_transfer(&[(reg << 1) | 0x80]).await?;
-        self.spi_transfer(&[0]).await?;
+        self.spi_transfer(&zero_buf).await?;
         self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
 
         Ok(self.read_buff[0])
@@ -135,7 +137,8 @@ where
             index += 1;
         }
 
-        self.spi_transfer(&[0]).await?;
+        let zero_buf = [0];
+        self.spi_transfer(&zero_buf).await?;
         output_buff[index] = self.read_buff[0];
 
         self.cs.set_high().map_err(|_| PCDErrorCode::Unknown)?;
