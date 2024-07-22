@@ -1,9 +1,10 @@
 [package]
-name = "mfrc522-esp-hal"
+name = "esp-hal-mfrc522"
 version = "0.1.0"
 authors = ["filipton <filipton12@gmail.com>"]
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
+description = "Simple mfrc522 library for esp-hal (can be used on any hal that implements embedded-hal-async)"
 
 [lib]
 
