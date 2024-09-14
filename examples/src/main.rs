@@ -10,7 +10,7 @@ use esp_hal::{
     dma::{Dma, DmaRxBuf, DmaTxBuf},
     dma_buffers,
     gpio::{AnyPin, Io, Level, Output},
-    peripherals::{Peripherals, DMA, SPI3},
+    peripherals::{Peripherals, DMA},
     prelude::*,
     spi::{
         master::{Spi, SpiDmaBus},
@@ -35,13 +35,29 @@ async fn main(_spawner: Spawner) {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks);
     esp_hal_embassy::init(&clocks, timg0.timer0);
+
+    #[cfg(feature = "esp32s3")]
     log::set_max_level(log::LevelFilter::Trace);
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+
+    #[cfg(feature = "esp32s3")]
     let sck = AnyPin::new(io.pins.gpio4);
+    #[cfg(feature = "esp32s3")]
     let miso = AnyPin::new(io.pins.gpio2);
+    #[cfg(feature = "esp32s3")]
     let mosi = AnyPin::new(io.pins.gpio3);
+    #[cfg(feature = "esp32s3")]
     let cs = AnyPin::new(io.pins.gpio5);
+
+    #[cfg(feature = "esp32c3")]
+    let sck = AnyPin::new(io.pins.gpio4);
+    #[cfg(feature = "esp32c3")]
+    let miso = AnyPin::new(io.pins.gpio5);
+    #[cfg(feature = "esp32c3")]
+    let mosi = AnyPin::new(io.pins.gpio6);
+    #[cfg(feature = "esp32c3")]
+    let cs = AnyPin::new(io.pins.gpio7);
 
     _ = _spawner.spawn(rfid_task(
         miso,
@@ -49,7 +65,10 @@ async fn main(_spawner: Spawner) {
         sck,
         cs,
         &clocks,
+        #[cfg(feature = "esp32s3")]
         peripherals.SPI3,
+        #[cfg(feature = "esp32c3")]
+        peripherals.SPI2,
         peripherals.DMA,
     ));
 
@@ -66,7 +85,11 @@ async fn rfid_task(
     sck: AnyPin<'static>,
     cs: AnyPin<'static>,
     clocks: &'static Clocks<'static>,
-    spi: SPI3,
+
+    #[cfg(feature = "esp32s3")] spi: esp_hal::peripherals::SPI3,
+
+    #[cfg(feature = "esp32c3")] spi: esp_hal::peripherals::SPI2,
+
     dma: DMA,
 ) {
     let dma = Dma::new(dma);
@@ -79,8 +102,8 @@ async fn rfid_task(
 
     let cs = Output::new(cs, Level::High);
     let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0, &clocks);
-    let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
-    let spi: SpiDmaBus<SPI3, _, FullDuplexMode, Async> =
+    let spi: Spi<_, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
+    let spi: SpiDmaBus<_, _, FullDuplexMode, Async> =
         spi.with_dma(dma_chan).with_buffers(dma_tx_buf, dma_rx_buf);
 
     //mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
