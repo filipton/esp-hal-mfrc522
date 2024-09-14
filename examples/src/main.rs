@@ -21,7 +21,7 @@ use esp_hal::{
     Async,
 };
 use log::{debug, error, info};
-use mfrc522_esp_hal::{consts::UidSize, debug::MFRC522Debug};
+use esp_hal_mfrc522::{consts::UidSize, debug::MFRC522Debug};
 use static_cell::make_static;
 
 #[main]
@@ -106,8 +106,8 @@ async fn rfid_task(
     let spi: SpiDmaBus<_, _, FullDuplexMode, Async> =
         spi.with_dma(dma_chan).with_buffers(dma_tx_buf, dma_rx_buf);
 
-    //mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    let mut mfrc522 = mfrc522_esp_hal::MFRC522::new(spi, cs); // embassy-time feature is enabled,
+    //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
+    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(spi, cs); // embassy-time feature is enabled,
                                                               // so no need to pass current_time
                                                               // function
 

@@ -20,7 +20,7 @@ esp-println = { version = "0.11.0", features = ["log"] }
 heapless = "0.8.0"
 log = { version = "0.4.22" }
 static_cell = { version = "2.1.0", features = ["nightly"] }
-mfrc522-esp-hal = { path = "../", features = ["embassy-time"] }
+esp-hal-mfrc522 = { path = "../", features = ["embassy-time"] }
 
 [profile.dev]
 # Rust debug is too slow.
