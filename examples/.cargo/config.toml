@@ -18,7 +18,7 @@ rustflags = [
 target = "xtensa-esp32s3-none-elf" #default esp32s3
 
 [env]
-ESP_LOGLEVEL="INFO"
+ESP_LOG="INFO"
 
 [unstable]
 build-std = ["core"]

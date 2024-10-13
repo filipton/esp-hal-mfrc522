@@ -2,69 +2,70 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+use adv_shift_registers::wrappers::ShifterPin;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use embedded_hal::digital::OutputPin;
 use esp_backtrace as _;
 use esp_hal::{
-    clock::{ClockControl, Clocks},
     dma::{Dma, DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{AnyPin, Io, Level, Output},
-    peripherals::{Peripherals, DMA},
+    gpio::{AnyPin, Io, Output},
+    peripherals::DMA,
     prelude::*,
-    spi::{
-        master::{Spi, SpiDmaBus},
-        FullDuplexMode, SpiMode,
-    },
-    system::SystemControl,
+    spi::{master::Spi, SpiMode},
     timer::timg::TimerGroup,
-    Async,
 };
-use log::{debug, error, info};
 use esp_hal_mfrc522::{consts::UidSize, debug::MFRC522Debug};
-use static_cell::make_static;
+use log::{debug, error, info};
 
 #[main]
 async fn main(_spawner: Spawner) {
-    let peripherals = Peripherals::take();
-    let system = SystemControl::new(peripherals.SYSTEM);
-    let clocks = ClockControl::max(system.clock_control).freeze();
-    let clocks = &*make_static!(clocks);
+    let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    esp_println::logger::init_logger_from_env();
+    esp_println::logger::init_logger(log::LevelFilter::Trace);
+    //esp_println::logger::init_logger_from_env();
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks);
-    esp_hal_embassy::init(&clocks, timg0.timer0);
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    esp_hal_embassy::init(timg0.timer0);
 
     #[cfg(feature = "esp32s3")]
     log::set_max_level(log::LevelFilter::Trace);
 
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    let data_pin = Output::new(io.pins.gpio10, esp_hal::gpio::Level::Low);
+    let clk_pin = Output::new(io.pins.gpio21, esp_hal::gpio::Level::Low);
+    let latch_pin = Output::new(io.pins.gpio1, esp_hal::gpio::Level::Low);
+
+    // NOTE: change this to normal CS pin (im just testing my adv_shift_registers crate)
+    let mut adv_shift_reg =
+        adv_shift_registers::AdvancedShiftRegister::<8, _>::new(data_pin, clk_pin, latch_pin, 0);
+    adv_shift_reg.update_shifters();
+    let digits_shifters = adv_shift_reg.get_shifter_range_mut(2..8);
+    digits_shifters.set_data(&[255; 6]);
+
+    let mut cs_pin = adv_shift_reg.get_pin_mut(1, 0, true);
+    _ = cs_pin.set_high();
 
     #[cfg(feature = "esp32s3")]
-    let sck = AnyPin::new(io.pins.gpio4);
+    let sck = io.pins.gpio4.degrade();
     #[cfg(feature = "esp32s3")]
-    let miso = AnyPin::new(io.pins.gpio2);
+    let miso = io.pins.gpio2.degrade();
     #[cfg(feature = "esp32s3")]
-    let mosi = AnyPin::new(io.pins.gpio3);
-    #[cfg(feature = "esp32s3")]
-    let cs = AnyPin::new(io.pins.gpio5);
+    let mosi = io.pins.gpio3.degrade();
 
     #[cfg(feature = "esp32c3")]
-    let sck = AnyPin::new(io.pins.gpio4);
+    let sck = io.pins.gpio4.degrade();
     #[cfg(feature = "esp32c3")]
-    let miso = AnyPin::new(io.pins.gpio5);
+    let miso = io.pins.gpio5.degrade();
     #[cfg(feature = "esp32c3")]
-    let mosi = AnyPin::new(io.pins.gpio6);
-    #[cfg(feature = "esp32c3")]
-    let cs = AnyPin::new(io.pins.gpio7);
+    let mosi = io.pins.gpio6.degrade();
 
     _ = _spawner.spawn(rfid_task(
         miso,
         mosi,
         sck,
-        cs,
-        &clocks,
+        cs_pin,
         #[cfg(feature = "esp32s3")]
         peripherals.SPI3,
         #[cfg(feature = "esp32c3")]
@@ -80,11 +81,10 @@ async fn main(_spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn rfid_task(
-    miso: AnyPin<'static>,
-    mosi: AnyPin<'static>,
-    sck: AnyPin<'static>,
-    cs: AnyPin<'static>,
-    clocks: &'static Clocks<'static>,
+    miso: AnyPin,
+    mosi: AnyPin,
+    sck: AnyPin,
+    cs_pin: ShifterPin,
 
     #[cfg(feature = "esp32s3")] spi: esp_hal::peripherals::SPI3,
 
@@ -94,22 +94,21 @@ async fn rfid_task(
 ) {
     let dma = Dma::new(dma);
     let dma_chan = dma.channel0;
-    let (tx_buffer, tx_descriptors, rx_buffer, rx_descriptors) = dma_buffers!(32000);
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(32000);
     let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
 
     let dma_chan = dma_chan.configure_for_async(false, esp_hal::dma::DmaPriority::Priority0);
 
-    let cs = Output::new(cs, Level::High);
-    let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0, &clocks);
-    let spi: Spi<_, FullDuplexMode> = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
-    let spi: SpiDmaBus<_, _, FullDuplexMode, Async> =
-        spi.with_dma(dma_chan).with_buffers(dma_tx_buf, dma_rx_buf);
+    //let cs = Output::new(cs, Level::High);
+    let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0);
+    let spi = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
+    let spi = spi.with_dma(dma_chan).with_buffers(dma_rx_buf, dma_tx_buf);
 
     //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(spi, cs); // embassy-time feature is enabled,
-                                                              // so no need to pass current_time
-                                                              // function
+    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(spi, cs_pin); // embassy-time feature is enabled,
+                                                                  // so no need to pass current_time
+                                                                  // function
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;
@@ -124,7 +123,14 @@ async fn rfid_task(
             let card = mfrc522.get_card(UidSize::Four).await;
             if let Ok(card) = card {
                 info!("Card UID: {}", card.get_number());
-                _ = mfrc522.debug_dump_card(&card).await;
+
+                let mut buff = [0; 18];
+                let mut byte_count = 18;
+                _ = mfrc522.mifare_read(0, &mut buff, &mut byte_count).await;
+
+                log::info!("{:02X?}", buff);
+
+                //_ = mfrc522.debug_dump_card(&card).await;
             }
 
             _ = mfrc522.picc_halta().await;
