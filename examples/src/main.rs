@@ -10,7 +10,7 @@ use esp_backtrace as _;
 use esp_hal::{
     dma::{Dma, DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{AnyPin, Io, Output},
+    gpio::{AnyPin, Output},
     peripherals::DMA,
     prelude::*,
     spi::{master::Spi, SpiMode},
@@ -32,10 +32,9 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "esp32s3")]
     log::set_max_level(log::LevelFilter::Trace);
 
-    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let data_pin = Output::new(io.pins.gpio10, esp_hal::gpio::Level::Low);
-    let clk_pin = Output::new(io.pins.gpio21, esp_hal::gpio::Level::Low);
-    let latch_pin = Output::new(io.pins.gpio1, esp_hal::gpio::Level::Low);
+    let data_pin = Output::new(peripherals.GPIO10, esp_hal::gpio::Level::Low);
+    let clk_pin = Output::new(peripherals.GPIO21, esp_hal::gpio::Level::Low);
+    let latch_pin = Output::new(peripherals.GPIO1, esp_hal::gpio::Level::Low);
 
     // NOTE: change this to normal CS pin (im just testing my adv_shift_registers crate)
     let mut adv_shift_reg =
@@ -48,18 +47,18 @@ async fn main(_spawner: Spawner) {
     _ = cs_pin.set_high();
 
     #[cfg(feature = "esp32s3")]
-    let sck = io.pins.gpio4.degrade();
+    let sck = peripherals.GPIO4.degrade();
     #[cfg(feature = "esp32s3")]
-    let miso = io.pins.gpio2.degrade();
+    let miso = peripherals.GPIO2.degrade();
     #[cfg(feature = "esp32s3")]
-    let mosi = io.pins.gpio3.degrade();
+    let mosi = peripherals.GPIO3.degrade();
 
     #[cfg(feature = "esp32c3")]
-    let sck = io.pins.gpio4.degrade();
+    let sck = peripherals.GPIO4.degrade();
     #[cfg(feature = "esp32c3")]
-    let miso = io.pins.gpio5.degrade();
+    let miso = peripherals.GPIO5.degrade();
     #[cfg(feature = "esp32c3")]
-    let mosi = io.pins.gpio6.degrade();
+    let mosi = peripherals.GPIO6.degrade();
 
     _ = _spawner.spawn(rfid_task(
         miso,
@@ -84,6 +83,7 @@ async fn rfid_task(
     miso: AnyPin,
     mosi: AnyPin,
     sck: AnyPin,
+    //cs_pin: AnyPin,
     cs_pin: ShifterPin,
 
     #[cfg(feature = "esp32s3")] spi: esp_hal::peripherals::SPI3,
@@ -98,12 +98,22 @@ async fn rfid_task(
     let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
 
-    let dma_chan = dma_chan.configure_for_async(false, esp_hal::dma::DmaPriority::Priority0);
+    let dma_chan = dma_chan.configure(false, esp_hal::dma::DmaPriority::Priority0);
 
     //let cs = Output::new(cs, Level::High);
-    let spi = Spi::new(spi, 5.MHz(), SpiMode::Mode0);
+    let spi = Spi::new_with_config(
+        spi,
+        esp_hal::spi::master::Config {
+            frequency: 5.MHz(),
+            mode: SpiMode::Mode0,
+            ..Default::default()
+        },
+    );
     let spi = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
-    let spi = spi.with_dma(dma_chan).with_buffers(dma_rx_buf, dma_tx_buf);
+    let spi = spi
+        .with_dma(dma_chan)
+        .with_buffers(dma_rx_buf, dma_tx_buf)
+        .into_async();
 
     //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
     let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(spi, cs_pin); // embassy-time feature is enabled,
