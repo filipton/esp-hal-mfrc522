@@ -1,14 +1,11 @@
-use embedded_hal::digital::OutputPin;
-
 use crate::{
     consts::{PCDErrorCode, PICCCommand},
     MFRC522,
 };
 
-impl<S, C> MFRC522<S, C>
+impl<S> MFRC522<S>
 where
-    S: embedded_hal_async::spi::SpiBus,
-    C: OutputPin,
+    S: embedded_hal_async::spi::SpiDevice,
 {
     pub async fn mifare_read(
         &mut self,

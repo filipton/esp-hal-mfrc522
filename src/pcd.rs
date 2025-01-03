@@ -2,7 +2,6 @@ use crate::{
     consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, Uid},
     MFRC522,
 };
-use embedded_hal::digital::OutputPin;
 use heapless::String;
 
 /// assert return boolean (false)
@@ -14,10 +13,9 @@ macro_rules! assert_rb {
     };
 }
 
-impl<S, C> MFRC522<S, C>
+impl<S> MFRC522<S>
 where
-    S: embedded_hal_async::spi::SpiBus,
-    C: OutputPin,
+    S: embedded_hal_async::spi::SpiDevice,
 {
     pub async fn pcd_init(&mut self) -> Result<(), PCDErrorCode> {
         self.pcd_reset().await?;
@@ -56,7 +54,7 @@ where
     }
 
     pub async fn pcd_reset(&mut self) -> Result<(), PCDErrorCode> {
-        self.spi.flush().await.map_err(|_| PCDErrorCode::Unknown)?;
+        // self.spi.flush().await.map_err(|_| PCDErrorCode::Unknown)?;
         self.write_reg(PCDRegister::CommandReg, PCDCommand::SoftReset)
             .await?;
 

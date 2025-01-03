@@ -1,6 +1,6 @@
 [package]
 name = "esp-hal-mfrc522"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["filipton <filipton12@gmail.com>"]
 edition = "2021"
 license = "MIT"
@@ -9,7 +9,6 @@ description = "Simple mfrc522 library for esp-hal (can be used on any hal that i
 [lib]
 
 [dependencies]
-embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 heapless = "0.8.0"
 log = { version = "0.4.22" }

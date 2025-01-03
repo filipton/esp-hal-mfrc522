@@ -4,8 +4,10 @@
 
 use adv_shift_registers::wrappers::ShifterPin;
 use embassy_executor::Spawner;
+use embassy_time::Delay;
 use embassy_time::{Duration, Timer};
 use embedded_hal::digital::OutputPin;
+use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::{
     dma::{Dma, DmaRxBuf, DmaTxBuf},
@@ -115,10 +117,12 @@ async fn rfid_task(
         .with_buffers(dma_rx_buf, dma_tx_buf)
         .into_async();
 
+    let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
+
     //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(spi, cs_pin); // embassy-time feature is enabled,
-                                                                  // so no need to pass current_time
-                                                                  // function
+    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(dev); // embassy-time feature is enabled,
+                                                          // so no need to pass current_time
+                                                          // function
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;

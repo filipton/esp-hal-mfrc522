@@ -21,6 +21,7 @@ esp-hal-mfrc522 = { path = "../", features = ["embassy-time"] }
 #adv-shift-registers = { path = "../../adv-shift-registers" }
 embedded-hal = "1.0.0"
 adv-shift-registers = "0.2.4"
+embedded-hal-bus = { version = "0.2.0", features = ["async"] }
 
 [profile.dev]
 # Rust debug is too slow.

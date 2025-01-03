@@ -240,6 +240,15 @@ pub enum PCDErrorCode {
 
     /// MIFARE PICC responded with NAK
     MifareNack,
+
+    /// SPI error
+    SpiError(embedded_hal_async::spi::ErrorKind),
+}
+
+impl<E: embedded_hal_async::spi::Error> From<E> for PCDErrorCode {
+    fn from(value: E) -> Self {
+        PCDErrorCode::SpiError(value.kind())
+    }
 }
 
 pub enum UidSize {
