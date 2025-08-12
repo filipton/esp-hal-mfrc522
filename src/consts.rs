@@ -51,7 +51,7 @@ impl PCDRegister {
     pub const ControlReg: u8 = 0x0C; // miscellaneous control registers
     pub const BitFramingReg: u8 = 0x0D; // adjustments for bit-oriented frames
     pub const CollReg: u8 = 0x0E; // bit position of the first bit-collision detected on the RF interface
-                                  //              0x0F     // reserved for future use
+    //              0x0F     // reserved for future use
 
     // Page 1: Command
     //               0x10     // reserved for future use
@@ -64,11 +64,11 @@ impl PCDRegister {
     pub const RxSelReg: u8 = 0x17; // selects internal receiver settings
     pub const RxThresholdReg: u8 = 0x18; // selects thresholds for the bit decoder
     pub const DemodReg: u8 = 0x19; // defines demodulator settings
-                                   //               0x1A     // reserved for future use
-                                   //               0x1B     // reserved for future use
+    //               0x1A     // reserved for future use
+    //               0x1B     // reserved for future use
     pub const MfTxReg: u8 = 0x1C; // controls some MIFARE communication transmit parameters
     pub const MfRxReg: u8 = 0x1D; // controls some MIFARE communication receive parameters
-                                  //               0x1E     // reserved for future use
+    //               0x1E     // reserved for future use
     pub const SerialSpeedReg: u8 = 0x1F; // selects the speed of the serial UART interface
 
     // Page 2: Configuration
@@ -77,7 +77,7 @@ impl PCDRegister {
     pub const CRCResultRegL: u8 = 0x22;
     //               0x23        // reserved for future use
     pub const ModWidthReg: u8 = 0x24; // controls the ModWidth setting?
-                                      //               0x25        // reserved for future use
+    //               0x25        // reserved for future use
     pub const RFCfgReg: u8 = 0x26; // configures the receiver gain
     pub const GsNReg: u8 = 0x27; // selects the conductance of the antenna driver pins TX1 and TX2 for modulation
     pub const CWGsPReg: u8 = 0x28; // defines the conductance of the p-driver output during periods of no modulation
@@ -102,10 +102,10 @@ impl PCDRegister {
     pub const TestDAC1Reg: u8 = 0x39; // defines the test value for TestDAC1
     pub const TestDAC2Reg: u8 = 0x3A; // defines the test value for TestDAC2
     pub const TestADCReg: u8 = 0x3B; // shows the value of ADC I and Q channels
-                                     //               0x3C      // reserved for production tests
-                                     //               0x3D      // reserved for production tests
-                                     //               0x3E      // reserved for production tests
-                                     //               0x3F      // reserved for production tests
+    //               0x3C      // reserved for production tests
+    //               0x3D      // reserved for production tests
+    //               0x3E      // reserved for production tests
+    //               0x3F      // reserved for production tests
 }
 
 #[allow(dead_code, non_upper_case_globals)]
@@ -132,9 +132,9 @@ impl PICCCommand {
     pub const PICC_CMD_SEL_CL3: u8 = 0x97; // Anti collision/Select, Cascade Level 3
     pub const PICC_CMD_HLTA: u8 = 0x50; // HaLT command, Type A. Instructs an ACTIVE PICC to go to state HALT.
     pub const PICC_CMD_RATS: u8 = 0xE0; // Request command for Answer To Reset.
-                                        // The commands used for MIFARE Classic (from http://www.mouser.com/ds/2/302/MF1S503x-89574.pdf, Section 9)
-                                        // Use PCD_MFAuthent to authenticate access to a sector, then use these commands to read/write/modify the blocks on the sector.
-                                        // The read/write commands can also be used for MIFARE Ultralight.
+    // The commands used for MIFARE Classic (from http://www.mouser.com/ds/2/302/MF1S503x-89574.pdf, Section 9)
+    // Use PCD_MFAuthent to authenticate access to a sector, then use these commands to read/write/modify the blocks on the sector.
+    // The read/write commands can also be used for MIFARE Ultralight.
     pub const PICC_CMD_MF_AUTH_KEY_A: u8 = 0x60; // Perform authentication with Key A
     pub const PICC_CMD_MF_AUTH_KEY_B: u8 = 0x61; // Perform authentication with Key B
     pub const PICC_CMD_MF_READ: u8 = 0x30; // Reads one 16 byte block from the authenticated sector of the PICC. Also used for MIFARE Ultralight.
@@ -143,8 +143,8 @@ impl PICCCommand {
     pub const PICC_CMD_MF_INCREMENT: u8 = 0xC1; // Increments the contents of a block and stores the result in the internal data register.
     pub const PICC_CMD_MF_RESTORE: u8 = 0xC2; // Reads the contents of a block into the internal data register.
     pub const PICC_CMD_MF_TRANSFER: u8 = 0xB0; // Writes the contents of the internal data register to a block.
-                                               // The commands used for MIFARE Ultralight (from http://www.nxp.com/documents/data_sheet/MF0ICU1.pdf, Section 8.6)
-                                               // The PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE Ultralight.
+    // The commands used for MIFARE Ultralight (from http://www.nxp.com/documents/data_sheet/MF0ICU1.pdf, Section 8.6)
+    // The PICC_CMD_MF_READ and PICC_CMD_MF_WRITE can also be used for MIFARE Ultralight.
     pub const PICC_CMD_UL_WRITE: u8 = 0xA2; // Writes one 4 byte page to the PICC.
 }
 
@@ -244,13 +244,20 @@ pub enum PCDErrorCode {
     /// SPI error
     SpiError(embedded_hal_async::spi::ErrorKind),
 
+    /// I2C error
+    I2cError(embedded_hal_async::i2c::ErrorKind),
+
     /// Any driver error
     DriverError,
 }
 
-impl<E: embedded_hal_async::spi::Error> From<E> for PCDErrorCode {
-    fn from(value: E) -> Self {
-        PCDErrorCode::SpiError(value.kind())
+impl PCDErrorCode {
+    pub fn from_spi_error<E: embedded_hal_async::spi::Error>(error: E) -> Self {
+        PCDErrorCode::SpiError(error.kind())
+    }
+
+    pub fn from_i2c_error<E: embedded_hal_async::i2c::Error>(error: E) -> Self {
+        PCDErrorCode::I2cError(error.kind())
     }
 }
 
