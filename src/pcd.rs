@@ -157,7 +157,7 @@ where
         let mut send_data = [0; 12];
         send_data[0] = cmd;
         send_data[1] = block_addr;
-        send_data[2..8].copy_from_slice(&key);
+        send_data[2..8].copy_from_slice(key);
         send_data[8..12]
             .copy_from_slice(&uid.uid_bytes[(uid.size as usize - 4)..(uid.size as usize)]);
 
@@ -369,7 +369,7 @@ where
             }
 
             let mut control_buff = [0; 2];
-            self.pcd_calc_crc(&back_data, *back_len - 2, &mut control_buff)
+            self.pcd_calc_crc(back_data, *back_len - 2, &mut control_buff)
                 .await?;
 
             if (back_data[*back_len as usize - 2] != control_buff[0])
@@ -418,7 +418,7 @@ where
 
         let mut str: String<128> = String::new();
         for i in 0..64 {
-            if i % 8 == 0 && str.len() != 0 {
+            if i % 8 == 0 && !str.is_empty() {
                 log::debug!("{}", str);
                 str.clear();
             }
@@ -512,7 +512,7 @@ where
                 self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
                     .await?;
 
-                data[out_offset + 0] = self.read_reg(PCDRegister::CRCResultRegL).await?;
+                data[out_offset] = self.read_reg(PCDRegister::CRCResultRegL).await?;
                 data[out_offset + 1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
                 return Ok(());
             }

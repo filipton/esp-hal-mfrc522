@@ -26,9 +26,9 @@ where
     S: embedded_hal_async::spi::SpiDevice,
 {
     async fn debug_dump_card(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
-        self.debug_dump_card_details(&uid).await?;
+        self.debug_dump_card_details(uid).await?;
         log::debug!("");
-        self.debug_dump_card_memory(&uid).await?;
+        self.debug_dump_card_memory(uid).await?;
 
         Ok(())
     }
@@ -135,7 +135,7 @@ async fn dump_mifare_classic_sector<S: SpiDevice>(
         let block_addr = first_block + block_offset;
         if is_sector_trailer {
             mfrc522
-                .pcd_authenticate(PICCCommand::PICC_CMD_MF_AUTH_KEY_A, first_block, &key, &uid)
+                .pcd_authenticate(PICCCommand::PICC_CMD_MF_AUTH_KEY_A, first_block, key, uid)
                 .await?;
 
             _ = dbg_line_buff.write_fmt(format_args!("  {sector: >2}    "));
@@ -166,9 +166,9 @@ async fn dump_mifare_classic_sector<S: SpiDevice>(
             let c3_ = buff[7] & 0xF;
 
             inverted_error = (c1 != (!c1_ & 0xF)) || (c2 != (!c2_ & 0xF)) || (c3 != (!c3_ & 0xF));
-            groups[0] = ((c1 & 1) << 2) | ((c2 & 1) << 1) | ((c3 & 1) << 0);
-            groups[1] = ((c1 & 2) << 1) | ((c2 & 2) << 0) | ((c3 & 2) >> 1);
-            groups[2] = ((c1 & 4) << 0) | ((c2 & 4) >> 1) | ((c3 & 4) >> 2);
+            groups[0] = ((c1 & 1) << 2) | ((c2 & 1) << 1) | ((c3 & 1));
+            groups[1] = ((c1 & 2) << 1) | ((c2 & 2)) | ((c3 & 2) >> 1);
+            groups[2] = ((c1 & 4)) | ((c2 & 4) >> 1) | ((c3 & 4) >> 2);
             groups[3] = ((c1 & 8) >> 1) | ((c2 & 8) >> 2) | ((c3 & 8) >> 3);
 
             is_sector_trailer = false;
@@ -189,7 +189,7 @@ async fn dump_mifare_classic_sector<S: SpiDevice>(
             let (g1, g2, g3) = (
                 (groups[group as usize] >> 2) & 1,
                 (groups[group as usize] >> 1) & 1,
-                (groups[group as usize] >> 0) & 1,
+                groups[group as usize] & 1,
             );
 
             _ = core::fmt::write(&mut dbg_line_buff, format_args!("[ {g1} {g2} {g3} ]"));

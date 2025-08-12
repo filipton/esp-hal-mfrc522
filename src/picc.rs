@@ -210,11 +210,11 @@ where
                 return Err(PCDErrorCode::CrcWrong);
             }
 
-            if buff[response_buff_ptr as usize + 0] & 0x04 != 0 {
+            if buff[response_buff_ptr as usize] & 0x04 != 0 {
                 cascade_level += 1;
             } else {
                 uid_complete = true;
-                uid.sak = buff[response_buff_ptr as usize + 0];
+                uid.sak = buff[response_buff_ptr as usize];
             }
         }
 

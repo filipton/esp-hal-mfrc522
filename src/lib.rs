@@ -119,7 +119,7 @@ where
             .await?;
 
         if rx_align > 0 {
-            let mask = (0xFF << rx_align) & 0xFF;
+            let mask = 0xFF << rx_align;
             output_buff[0] = (first_out_byte & !mask) | (output_buff[0] & mask);
         }
 
@@ -129,9 +129,5 @@ where
 
 #[inline(always)]
 pub fn tif<T>(expr: bool, true_val: T, false_val: T) -> T {
-    if expr {
-        true_val
-    } else {
-        false_val
-    }
+    if expr { true_val } else { false_val }
 }
