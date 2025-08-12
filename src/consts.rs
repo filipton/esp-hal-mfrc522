@@ -243,6 +243,9 @@ pub enum PCDErrorCode {
 
     /// SPI error
     SpiError(embedded_hal_async::spi::ErrorKind),
+
+    /// Any driver error
+    DriverError,
 }
 
 impl<E: embedded_hal_async::spi::Error> From<E> for PCDErrorCode {

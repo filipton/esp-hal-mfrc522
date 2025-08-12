@@ -9,6 +9,111 @@ pub mod mifare;
 pub mod pcd;
 pub mod picc;
 
+pub trait MfrcDriver: Send {
+    fn write_reg(&mut self, reg: u8, val: u8) -> impl Future<Output = Result<(), PCDErrorCode>>;
+    fn write_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        values: &[u8],
+    ) -> impl Future<Output = Result<(), PCDErrorCode>>;
+    fn read_reg(&mut self, reg: u8) -> impl Future<Output = Result<u8, PCDErrorCode>>;
+    fn read_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        output_buff: &mut [u8],
+        rx_align: u8,
+    ) -> impl Future<Output = Result<(), PCDErrorCode>>;
+}
+
+pub struct SpiDriver<S>
+where
+    S: embedded_hal_async::spi::SpiDevice,
+{
+    spi: S,
+}
+
+impl<S> MfrcDriver for SpiDriver<S>
+where
+    S: embedded_hal_async::spi::SpiDevice + Send,
+{
+    fn write_reg(&mut self, reg: u8, val: u8) -> impl Future<Output = Result<(), PCDErrorCode>> {
+        async move {
+            self.spi
+                .transaction(&mut [Operation::Write(&[reg << 1, val])])
+                .await?;
+
+            Ok(())
+        }
+    }
+
+    fn write_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        values: &[u8],
+    ) -> impl Future<Output = Result<(), PCDErrorCode>> {
+        async move {
+            self.spi
+                .transaction(&mut [
+                    Operation::Write(&[reg << 1]),
+                    Operation::Write(&values[..count]),
+                ])
+                .await?;
+
+            Ok(())
+        }
+    }
+
+    fn read_reg(&mut self, reg: u8) -> impl Future<Output = Result<u8, PCDErrorCode>> {
+        async move {
+            let mut read = [0; 1];
+            self.spi
+                .transaction(&mut [
+                    Operation::Write(&[(reg << 1) | 0x80]),
+                    Operation::Transfer(&mut read, &[0]),
+                ])
+                .await?;
+
+            Ok(read[0])
+        }
+    }
+
+    fn read_reg_buff(
+        &mut self,
+        reg: u8,
+        count: usize,
+        output_buff: &mut [u8],
+        rx_align: u8,
+    ) -> impl Future<Output = Result<(), PCDErrorCode>> {
+        async move {
+            if count == 0 {
+                return Ok(());
+            }
+
+            let addr = 0x80 | (reg << 1);
+            let first_out_byte = output_buff[0];
+            output_buff[..count - 1].fill(addr);
+            output_buff[count - 1] = 0;
+
+            self.spi
+                .transaction(&mut [
+                    Operation::Write(&[addr]),
+                    Operation::TransferInPlace(&mut output_buff[..count]),
+                ])
+                .await?;
+
+            if rx_align > 0 {
+                let mask = 0xFF << rx_align;
+                output_buff[0] = (first_out_byte & !mask) | (output_buff[0] & mask);
+            }
+
+            Ok(())
+        }
+    }
+}
+
 pub struct MFRC522<S>
 where
     S: embedded_hal_async::spi::SpiDevice,
