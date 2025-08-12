@@ -1,10 +1,9 @@
 use core::fmt::Write;
 
 use crate::{
+    MFRC522, MfrcDriver,
     consts::{PCDErrorCode, PICCCommand, PICCType, Uid},
-    MFRC522,
 };
-use embedded_hal_async::spi::SpiDevice;
 use heapless::String;
 
 #[allow(async_fn_in_trait)]
@@ -14,16 +13,17 @@ pub trait MFRC522Debug {
     async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode>;
 }
 
-impl<S> MFRC522<S>
+impl<D> MFRC522<D>
 where
-    S: embedded_hal_async::spi::SpiDevice,
+    D: MfrcDriver,
 {
     pub async fn test(&mut self) {}
 }
 
-impl<S> MFRC522Debug for MFRC522<S>
+#[allow(unused)]
+impl<D> MFRC522<D>
 where
-    S: embedded_hal_async::spi::SpiDevice,
+    D: MfrcDriver,
 {
     async fn debug_dump_card(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         self.debug_dump_card_details(uid).await?;
@@ -78,8 +78,8 @@ where
     }
 }
 
-async fn dump_mifare_classic<S: SpiDevice>(
-    mfrc522: &mut MFRC522<S>,
+async fn dump_mifare_classic<D: MfrcDriver>(
+    mfrc522: &mut MFRC522<D>,
     uid: &Uid,
     key: &[u8],
     picc_type: PICCType,
@@ -104,8 +104,8 @@ async fn dump_mifare_classic<S: SpiDevice>(
     Ok(())
 }
 
-async fn dump_mifare_classic_sector<S: SpiDevice>(
-    mfrc522: &mut MFRC522<S>,
+async fn dump_mifare_classic_sector<D: MfrcDriver>(
+    mfrc522: &mut MFRC522<D>,
     uid: &Uid,
     key: &[u8],
     sector: u8,
@@ -150,8 +150,8 @@ async fn dump_mifare_classic_sector<S: SpiDevice>(
             .mifare_read(block_addr, &mut buff, &mut byte_count)
             .await?;
 
-        for i in 0..16 {
-            _ = dbg_line_buff.write_fmt(format_args!("{:02X} ", buff[i]));
+        for (i, buffi) in buff.iter().enumerate().take(16) {
+            _ = dbg_line_buff.write_fmt(format_args!("{:02X} ", buffi));
             if i % 4 == 3 {
                 _ = dbg_line_buff.push(' ');
             }
@@ -166,9 +166,9 @@ async fn dump_mifare_classic_sector<S: SpiDevice>(
             let c3_ = buff[7] & 0xF;
 
             inverted_error = (c1 != (!c1_ & 0xF)) || (c2 != (!c2_ & 0xF)) || (c3 != (!c3_ & 0xF));
-            groups[0] = ((c1 & 1) << 2) | ((c2 & 1) << 1) | ((c3 & 1));
-            groups[1] = ((c1 & 2) << 1) | ((c2 & 2)) | ((c3 & 2) >> 1);
-            groups[2] = ((c1 & 4)) | ((c2 & 4) >> 1) | ((c3 & 4) >> 2);
+            groups[0] = ((c1 & 1) << 2) | ((c2 & 1) << 1) | (c3 & 1);
+            groups[1] = ((c1 & 2) << 1) | (c2 & 2) | ((c3 & 2) >> 1);
+            groups[2] = (c1 & 4) | ((c2 & 4) >> 1) | ((c3 & 4) >> 2);
             groups[3] = ((c1 & 8) >> 1) | ((c2 & 8) >> 2) | ((c3 & 8) >> 3);
 
             is_sector_trailer = false;
@@ -213,8 +213,8 @@ async fn dump_mifare_classic_sector<S: SpiDevice>(
     Ok(())
 }
 
-async fn dump_mifare_ultralight<S: SpiDevice>(
-    mfrc522: &mut MFRC522<S>,
+async fn dump_mifare_ultralight<D: MfrcDriver>(
+    mfrc522: &mut MFRC522<D>,
 ) -> Result<(), PCDErrorCode> {
     let mut buff = [0; 18];
     let mut i;

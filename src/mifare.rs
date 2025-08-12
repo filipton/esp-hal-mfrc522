@@ -1,11 +1,11 @@
 use crate::{
+    MFRC522, MfrcDriver,
     consts::{PCDErrorCode, PICCCommand},
-    MFRC522,
 };
 
-impl<S> MFRC522<S>
+impl<D> MFRC522<D>
 where
-    S: embedded_hal_async::spi::SpiDevice,
+    D: MfrcDriver,
 {
     pub async fn mifare_read(
         &mut self,
@@ -61,9 +61,9 @@ where
         let mut cmd_buff = [0; 6];
         cmd_buff[0] = PICCCommand::PICC_CMD_UL_WRITE;
         cmd_buff[1] = page;
-        cmd_buff[2..].copy_from_slice(&mut buff[..4]);
+        cmd_buff[2..].copy_from_slice(&buff[..4]);
 
-        self.pcd_mifare_transceive(&mut cmd_buff, 6, false).await?;
+        self.pcd_mifare_transceive(&cmd_buff, 6, false).await?;
         Ok(())
     }
 
@@ -159,9 +159,9 @@ where
         g2: u8,
         g3: u8,
     ) -> Result<(), PCDErrorCode> {
-        let c1 = ((g3 & 4) << 1) | ((g2 & 4)) | ((g1 & 4) >> 1) | ((g0 & 4) >> 2);
-        let c2 = ((g3 & 2) << 2) | ((g2 & 2) << 1) | ((g1 & 2)) | ((g0 & 2) >> 1);
-        let c3 = ((g3 & 1) << 3) | ((g2 & 1) << 2) | ((g1 & 1) << 1) | ((g0 & 1));
+        let c1 = ((g3 & 4) << 1) | (g2 & 4) | ((g1 & 4) >> 1) | ((g0 & 4) >> 2);
+        let c2 = ((g3 & 2) << 2) | ((g2 & 2) << 1) | (g1 & 2) | ((g0 & 2) >> 1);
+        let c3 = ((g3 & 1) << 3) | ((g2 & 1) << 2) | ((g1 & 1) << 1) | (g0 & 1);
 
         buff[0] = (!c2 & 0xF) << 4 | (!c1 & 0xF);
         buff[1] = c1 << 4 | (!c3 & 0xF);

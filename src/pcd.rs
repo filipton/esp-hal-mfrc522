@@ -1,6 +1,6 @@
 use crate::{
+    MFRC522, MfrcDriver,
     consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, Uid},
-    MFRC522,
 };
 use heapless::String;
 
@@ -13,9 +13,9 @@ macro_rules! assert_rb {
     };
 }
 
-impl<S> MFRC522<S>
+impl<D> MFRC522<D>
 where
-    S: embedded_hal_async::spi::SpiDevice,
+    D: MfrcDriver,
 {
     pub async fn pcd_init(&mut self) -> Result<(), PCDErrorCode> {
         self.pcd_reset().await?;
@@ -263,6 +263,7 @@ where
         Ok([cmd_buff[0], cmd_buff[1]])
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn pcd_transceive_data(
         &mut self,
         send_data: &[u8],
@@ -288,6 +289,7 @@ where
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn pcd_communicate_with_picc(
         &mut self,
         cmd: u8,
@@ -413,17 +415,17 @@ where
         self.read_reg_buff(PCDRegister::FIFODataReg, 64, &mut res, 0)
             .await?;
 
-        self.write_reg(PCDRegister::AutoTestReg, 0x40 & 0x00)
-            .await?;
+        self.write_reg(PCDRegister::AutoTestReg, 0x00).await?;
 
         let mut str: String<128> = String::new();
-        for i in 0..64 {
+
+        for (i, resi) in res.iter().enumerate() {
             if i % 8 == 0 && !str.is_empty() {
                 log::debug!("{}", str);
                 str.clear();
             }
 
-            _ = core::fmt::write(&mut str, format_args!("{:#04x} ", res[i]));
+            _ = core::fmt::write(&mut str, format_args!("{:#04x} ", resi));
         }
         log::debug!("{}", str);
 

@@ -1,11 +1,12 @@
 use crate::{
+    MFRC522, MfrcDriver,
     consts::{PCDErrorCode, PCDRegister, PICCCommand, Uid},
-    tif, MFRC522,
+    tif,
 };
 
-impl<S> MFRC522<S>
+impl<D> MFRC522<D>
 where
-    S: embedded_hal_async::spi::SpiDevice,
+    D: MfrcDriver,
 {
     pub async fn picc_is_new_card_present(&mut self) -> Result<(), PCDErrorCode> {
         let mut buffer_atqa = [0; 2];

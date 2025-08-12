@@ -1,6 +1,6 @@
 [package]
 name = "esp-hal-mfrc522"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["filipton <filipton12@gmail.com>"]
 edition = "2024"
 license = "MIT"
@@ -15,7 +15,5 @@ log = { version = "0.4.27" }
 embassy-time = { version = "0.4.0", optional = true }
 
 [features]
-default = ["spi"]
-spi = []
-i2c = []
+default = []
 embassy-time = ["dep:embassy-time"]

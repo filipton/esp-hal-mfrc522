@@ -119,8 +119,9 @@ async fn rfid_task(
 
     let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
 
+    let driver = esp_hal_mfrc522::SpiDriver::new(dev);
     //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(dev); // embassy-time feature is enabled,
+    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(driver); // embassy-time feature is enabled,
                                                           // so no need to pass current_time
                                                           // function
 
