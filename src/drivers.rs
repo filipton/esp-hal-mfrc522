@@ -172,6 +172,7 @@ where
             return Ok(());
         }
 
+        let first_out_byte = output_buff[0];
         self.i2c
             .transaction(
                 self.address,
@@ -183,34 +184,10 @@ where
             .await
             .map_err(PCDErrorCode::from_i2c_error)?;
 
-        // TODO: impl this
-        /*
-               * while(_wire.available() && index < count) {
-          if(index == 0 && rxAlign) {    // Only update bit positions rxAlign..7 in values[0]
-            // Create bit mask for bit positions rxAlign..7
-            byte mask = 0;
-
-            for(byte i     = rxAlign; i <= 7; i++) {
-              mask |= (1 << i);
-            }
-            // Read value and tell that we want to read the same address again.
-            byte     value = (byte)_wire.read(); // returns int but only with uint8 content
-
-            // Apply mask to both current value of values[0] and the new data in value.
-            values[0] = (values[index] & ~mask) | (value & mask);
-          } else { // Normal case
-            values[index] = (byte)_wire.read(); // returns int but only with uint8 content
-          }
-          index++;
-        }
-              */
-
-        /*
         if rx_align > 0 {
             let mask = 0xFF << rx_align;
             output_buff[0] = (first_out_byte & !mask) | (output_buff[0] & mask);
         }
-        */
 
         Ok(())
     }
