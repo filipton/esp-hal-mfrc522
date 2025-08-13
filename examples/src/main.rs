@@ -9,15 +9,18 @@ use embassy_time::{Duration, Timer};
 use embedded_hal::digital::OutputPin;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
+use esp_hal::gpio::Pin;
+use esp_hal::spi::Mode;
+use esp_hal::time::Rate;
 use esp_hal::{
-    dma::{Dma, DmaRxBuf, DmaTxBuf},
+    dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
     gpio::{AnyPin, Output},
     peripherals::DMA,
-    prelude::*,
-    spi::{master::Spi, SpiMode},
+    spi::master::Spi,
     timer::timg::TimerGroup,
 };
+use esp_hal_embassy::main;
 use esp_hal_mfrc522::{consts::UidSize, debug::MFRC522Debug};
 use log::{debug, error, info};
 
@@ -34,9 +37,27 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "esp32s3")]
     log::set_max_level(log::LevelFilter::Trace);
 
-    let data_pin = Output::new(peripherals.GPIO10, esp_hal::gpio::Level::Low);
-    let clk_pin = Output::new(peripherals.GPIO21, esp_hal::gpio::Level::Low);
-    let latch_pin = Output::new(peripherals.GPIO1, esp_hal::gpio::Level::Low);
+    // NOTE: test i2c initalization
+    let i2c = esp_hal::i2c::master::I2c::new(peripherals.I2C0, Default::default())
+        .unwrap()
+        .into_async();
+    let driver = esp_hal_mfrc522::drivers::I2CDriver::new(i2c, 0x69);
+
+    let data_pin = Output::new(
+        peripherals.GPIO10,
+        esp_hal::gpio::Level::Low,
+        Default::default(),
+    );
+    let clk_pin = Output::new(
+        peripherals.GPIO21,
+        esp_hal::gpio::Level::Low,
+        Default::default(),
+    );
+    let latch_pin = Output::new(
+        peripherals.GPIO1,
+        esp_hal::gpio::Level::Low,
+        Default::default(),
+    );
 
     // NOTE: change this to normal CS pin (im just testing my adv_shift_registers crate)
     let mut adv_shift_reg =
@@ -71,7 +92,7 @@ async fn main(_spawner: Spawner) {
         peripherals.SPI3,
         #[cfg(feature = "esp32c3")]
         peripherals.SPI2,
-        peripherals.DMA,
+        peripherals.DMA_CH0,
     ));
 
     loop {
@@ -82,48 +103,44 @@ async fn main(_spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn rfid_task(
-    miso: AnyPin,
-    mosi: AnyPin,
-    sck: AnyPin,
+    miso: AnyPin<'static>,
+    mosi: AnyPin<'static>,
+    sck: AnyPin<'static>,
     //cs_pin: AnyPin,
     cs_pin: ShifterPin,
 
-    #[cfg(feature = "esp32s3")] spi: esp_hal::peripherals::SPI3,
+    #[cfg(feature = "esp32s3")] spi: esp_hal::peripherals::SPI3<'static>,
 
-    #[cfg(feature = "esp32c3")] spi: esp_hal::peripherals::SPI2,
+    #[cfg(feature = "esp32c3")] spi: esp_hal::peripherals::SPI2<'static>,
 
-    dma: DMA,
+    dma: esp_hal::peripherals::DMA_CH0<'static>,
 ) {
-    let dma = Dma::new(dma);
-    let dma_chan = dma.channel0;
-    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(32000);
-    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
-    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
-
-    let dma_chan = dma_chan.configure(false, esp_hal::dma::DmaPriority::Priority0);
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(512);
+    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("Dma tx buf failed");
+    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("Dma rx buf failed");
 
     //let cs = Output::new(cs, Level::High);
-    let spi = Spi::new_with_config(
+    let spi = Spi::new(
         spi,
-        esp_hal::spi::master::Config {
-            frequency: 5.MHz(),
-            mode: SpiMode::Mode0,
-            ..Default::default()
-        },
-    );
+        esp_hal::spi::master::Config::default()
+            .with_frequency(Rate::from_khz(400))
+            .with_mode(Mode::_0),
+    )
+    .unwrap();
+
     let spi = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
     let spi = spi
-        .with_dma(dma_chan)
+        .with_dma(dma)
         .with_buffers(dma_rx_buf, dma_tx_buf)
         .into_async();
 
     let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
 
-    let driver = esp_hal_mfrc522::SpiDriver::new(dev);
+    let driver = esp_hal_mfrc522::drivers::SpiDriver::new(dev);
     //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
     let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(driver); // embassy-time feature is enabled,
-                                                          // so no need to pass current_time
-                                                          // function
+                                                             // so no need to pass current_time
+                                                             // function
 
     _ = mfrc522.pcd_init().await;
     _ = mfrc522.pcd_selftest().await;
