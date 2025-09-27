@@ -25,7 +25,7 @@ impl<D> MFRC522<D>
 where
     D: MfrcDriver,
 {
-    async fn debug_dump_card(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
+    pub async fn debug_dump_card(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         self.debug_dump_card_details(uid).await?;
         log::debug!("");
         self.debug_dump_card_memory(uid).await?;
@@ -33,7 +33,7 @@ where
         Ok(())
     }
 
-    async fn debug_dump_card_memory(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
+    pub async fn debug_dump_card_memory(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         let picc_type = PICCType::from_sak(uid.sak);
 
         match picc_type {
@@ -64,7 +64,7 @@ where
         Ok(())
     }
 
-    async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
+    pub async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         let mut dbg_line_buff: String<32> = String::new();
         for i in 0..uid.size {
             _ = dbg_line_buff.write_fmt(format_args!(" {:02X}", uid.uid_bytes[i as usize]));
