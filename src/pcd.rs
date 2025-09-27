@@ -167,8 +167,8 @@ where
             &send_data,
             12,
             &mut [],
-            &mut 0,
-            &mut 0,
+            None,
+            None,
             0,
             false,
         )
@@ -207,8 +207,8 @@ where
                 &cmd_buff.clone(),
                 send_len,
                 &mut cmd_buff,
-                &mut cmd_buff_size,
-                &mut valid_bits,
+                Some(&mut cmd_buff_size),
+                Some(&mut valid_bits),
                 0,
                 false,
             )
@@ -253,8 +253,8 @@ where
             &cmd_buff.clone(),
             7,
             &mut cmd_buff,
-            &mut rx_length,
-            &mut valid_bits,
+            Some(&mut rx_length),
+            Some(&mut valid_bits),
             0,
             false,
         )
@@ -269,8 +269,8 @@ where
         send_data: &[u8],
         send_len: u8,
         back_data: &mut [u8],
-        back_len: &mut u8,
-        valid_bits: &mut u8,
+        back_len: Option<&mut u8>,
+        valid_bits: Option<&mut u8>,
         rx_align: u8,
         check_crc: bool,
     ) -> Result<(), PCDErrorCode> {
@@ -297,12 +297,17 @@ where
         send_data: &[u8],
         send_len: u8,
         back_data: &mut [u8],
-        back_len: &mut u8,
-        valid_bits: &mut u8,
+        mut back_len: Option<&mut u8>,
+        valid_bits: Option<&mut u8>,
         rx_align: u8,
         check_crc: bool,
     ) -> Result<(), PCDErrorCode> {
-        let tx_last_bits = *valid_bits;
+        let tx_last_bits = if let Some(ref valid_bits) = valid_bits {
+            **valid_bits
+        } else {
+            0
+        };
+
         let bit_framing = (rx_align << 4) + tx_last_bits;
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
@@ -341,18 +346,18 @@ where
         }
 
         let mut _valid_bits = 0;
-        if *back_len != 0 {
+        if let Some(back_len) = back_len.as_mut() {
             let n = self.read_reg(PCDRegister::FIFOLevelReg).await?;
-            if n > *back_len {
+            if n > **back_len {
                 return Err(PCDErrorCode::NoRoom);
             }
 
-            *back_len = n;
+            **back_len = n;
             self.read_reg_buff(PCDRegister::FIFODataReg, n as usize, back_data, rx_align)
                 .await?;
 
             _valid_bits = self.read_reg(PCDRegister::ControlReg).await? & 0x07;
-            if *valid_bits != 0 {
+            if let Some(valid_bits) = valid_bits {
                 *valid_bits = _valid_bits;
             }
         }
@@ -361,7 +366,9 @@ where
             return Err(PCDErrorCode::Collision);
         }
 
-        if *back_len != 0 && check_crc {
+        if let Some(back_len) = back_len
+            && check_crc
+        {
             if *back_len == 1 && _valid_bits == 4 {
                 return Err(PCDErrorCode::MifareNack);
             }

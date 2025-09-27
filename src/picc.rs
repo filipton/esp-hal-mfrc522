@@ -29,7 +29,7 @@ where
 
         self.pcd_calc_crc_single_buf(&mut buff, 2, 2).await?;
         let res = self
-            .pcd_transceive_data(&buff, 4, &mut [], &mut 0, &mut 0, 0, false)
+            .pcd_transceive_data(&buff, 4, &mut [], None, None, 0, false)
             .await;
 
         // yes error timeout here is only Ok here
@@ -147,8 +147,8 @@ where
                         &buff.clone(),
                         buffer_used,
                         &mut buff[response_buff_ptr as usize..],
-                        &mut response_length,
-                        &mut tx_last_bits,
+                        Some(&mut response_length),
+                        Some(&mut tx_last_bits),
                         rx_align,
                         false,
                     )
@@ -258,8 +258,8 @@ where
             &[cmd],
             1,
             buffer_atqa,
-            buffer_size,
-            &mut valid_bits,
+            Some(buffer_size),
+            Some(&mut valid_bits),
             0,
             false,
         )
