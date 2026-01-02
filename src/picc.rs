@@ -219,6 +219,9 @@ where
             }
         }
 
+        // Set correct uid size
+        uid.size = 3 * cascade_level + 1;
+
         Ok(())
     }
 
