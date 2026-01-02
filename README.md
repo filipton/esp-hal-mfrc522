@@ -7,21 +7,32 @@ This project is just "port" of [this Arduino Library](https://github.com/OSSLibr
 
 ## Example
 ```rust
-let dma = Dma::new(peripherals.dma);
-let dma_chan = dma.channel0;
-let (descriptors, rx_descriptors) = dma_descriptors!(32000);
-let dma_chan = dma_chan.configure_for_async(false, esp_hal::dma::DmaPriority::Priority0);
+let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(512);
+let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("Dma tx buf failed");
+let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("Dma rx buf failed");
 
-let cs = Output::new(io.pins.gpio5, Level::High);
-let spi = Spi::new(peripherals.SPI3, 5.MHz(), SpiMode::Mode0, &clocks);
-let spi: Spi<SPI3, FullDuplexMode> = spi.with_sck(io.pins.gpio4).with_miso(io.pins.gpio2).with_mosi(io.pins.gpio3);
-let spi: SpiDma<SPI3, _, FullDuplexMode, Async> =
-    spi.with_dma(dma_chan, descriptors, rx_descriptors);
+//let cs = Output::new(cs, Level::High);
+let spi = Spi::new(
+    spi,
+    esp_hal::spi::master::Config::default()
+        .with_frequency(Rate::from_khz(400))
+        .with_mode(Mode::_0),
+)
+.unwrap();
 
-//mfrc522_esp_hal::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-let mut mfrc522 = mfrc522_esp_hal::MFRC522::new(spi, cs); // embassy-time feature is enabled,
-                                                          // so no need to pass current_time
-                                                          // function
+let spi = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
+let spi = spi
+    .with_dma(dma)
+    .with_buffers(dma_rx_buf, dma_tx_buf)
+    .into_async();
+
+let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
+
+let driver = esp_hal_mfrc522::drivers::SpiDriver::new(dev);
+//esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
+let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(driver); // embassy-time feature is enabled,
+                                                         // so no need to pass current_time
+                                                         // function
 
 _ = mfrc522.pcd_init().await;
 _ = mfrc522.pcd_selftest().await;
