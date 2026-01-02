@@ -5,6 +5,7 @@ authors = ["filipton <filipton12@gmail.com>"]
 edition = "2024"
 license = "MIT"
 description = "Simple mfrc522 library for esp-hal (can be used on any hal that implements embedded-hal-async)"
+repository = "https://github.com/filipton/esp-hal-mfrc522"
 
 [lib]
 
