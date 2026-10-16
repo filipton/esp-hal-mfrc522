@@ -13,21 +13,14 @@ where
         buff: &mut [u8],
         buff_size: &mut u8,
     ) -> Result<(), PCDErrorCode> {
-        if *buff_size < 18 {
+        if *buff_size < 18 || buff.len() < 18 {
             return Err(PCDErrorCode::NoRoom);
         }
 
-        buff[0] = PICCCommand::PICC_CMD_MF_READ;
-        buff[1] = block_addr;
+        let mut cmd = [PICCCommand::PICC_CMD_MF_READ, block_addr, 0, 0];
+        self.pcd_calc_crc_single_buf(&mut cmd, 2, 2).await?;
 
-        let mut tmp_buff = [0; 2];
-        tmp_buff.copy_from_slice(&buff[..2]);
-        self.pcd_calc_crc(&tmp_buff, 2, &mut buff[2..]).await?;
-
-        let mut tmp_buff = [0; 4];
-        tmp_buff.copy_from_slice(&buff[..4]);
-
-        self.pcd_transceive_data(&tmp_buff, 4, buff, Some(buff_size), None, 0, true)
+        self.pcd_transceive_data(&cmd, 4, buff, Some(buff_size), None, 0, true)
             .await
     }
 
@@ -54,14 +47,14 @@ where
         buff: &mut [u8],
         buff_size: u8,
     ) -> Result<(), PCDErrorCode> {
-        if buff_size < 4 {
+        let Some(data) = buff.get(..4).filter(|_| buff_size >= 4) else {
             return Err(PCDErrorCode::Invalid);
-        }
+        };
 
         let mut cmd_buff = [0; 6];
         cmd_buff[0] = PICCCommand::PICC_CMD_UL_WRITE;
         cmd_buff[1] = page;
-        cmd_buff[2..].copy_from_slice(&buff[..4]);
+        cmd_buff[2..].copy_from_slice(data);
 
         self.pcd_mifare_transceive(&cmd_buff, 6, false).await?;
         Ok(())
@@ -116,10 +109,7 @@ where
         let mut size = 18;
 
         self.mifare_read(block_addr, &mut buff, &mut size).await?;
-        Ok(((buff[3] as u32) << 24)
-            | ((buff[2] as u32) << 16)
-            | ((buff[1] as u32) << 8)
-            | (buff[0] as u32))
+        Ok(u32::from_le_bytes([buff[0], buff[1], buff[2], buff[3]]))
     }
 
     pub async fn mifare_set_value(
@@ -127,21 +117,11 @@ where
         block_addr: u8,
         value: u32,
     ) -> Result<(), PCDErrorCode> {
-        let mut buff = [0; 18];
-
-        buff[0] = (value & 0xFF) as u8;
-        buff[8] = (value & 0xFF) as u8;
-        buff[1] = (value & 0xFF00) as u8 >> 8;
-        buff[9] = (value & 0xFF00) as u8 >> 8;
-        buff[2] = (value & 0xFF0000) as u8 >> 16;
-        buff[10] = (value & 0xFF0000) as u8 >> 16;
-        buff[3] = (value & 0xFF000000) as u8 >> 24;
-        buff[11] = (value & 0xFF000000) as u8 >> 24;
-
-        buff[4] = !buff[0];
-        buff[5] = !buff[1];
-        buff[6] = !buff[2];
-        buff[7] = !buff[3];
+        // value block: value, !value, value, addr, !addr, addr, !addr
+        let mut buff = [0; 16];
+        buff[0..4].copy_from_slice(&value.to_le_bytes());
+        buff[4..8].copy_from_slice(&(!value).to_le_bytes());
+        buff[8..12].copy_from_slice(&value.to_le_bytes());
 
         buff[12] = block_addr;
         buff[14] = block_addr;
@@ -159,6 +139,10 @@ where
         g2: u8,
         g3: u8,
     ) -> Result<(), PCDErrorCode> {
+        let Some(buff) = buff.get_mut(..3) else {
+            return Err(PCDErrorCode::NoRoom);
+        };
+
         let c1 = ((g3 & 4) << 1) | (g2 & 4) | ((g1 & 4) >> 1) | ((g0 & 4) >> 2);
         let c2 = ((g3 & 2) << 2) | ((g2 & 2) << 1) | (g1 & 2) | ((g0 & 2) >> 1);
         let c3 = ((g3 & 1) << 3) | ((g2 & 1) << 2) | ((g1 & 1) << 1) | (g0 & 1);

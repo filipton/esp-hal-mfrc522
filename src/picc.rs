@@ -16,10 +16,14 @@ where
         self.write_reg(PCDRegister::RxModeReg, 0x00).await?;
         self.write_reg(PCDRegister::ModWidthReg, 0x26).await?;
 
-        self.picc_request_a(&mut buffer_atqa, &mut buffer_size)
-            .await?;
-
-        Ok(())
+        // a collision still means at least one card is in the field (anticollision runs in select)
+        match self
+            .picc_request_a(&mut buffer_atqa, &mut buffer_size)
+            .await
+        {
+            Ok(()) | Err(PCDErrorCode::Collision) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn picc_halta(&mut self) -> Result<(), PCDErrorCode> {

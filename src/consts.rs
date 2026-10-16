@@ -9,23 +9,10 @@ pub struct Uid {
 
 impl Uid {
     pub fn get_number(&self) -> u128 {
-        match self.size {
-            4 => u32::from_le_bytes(self.uid_bytes[..4].try_into().unwrap_or([0, 0, 0, 0])) as u128,
-            7 => {
-                let mut bytes = [0; 8];
-                bytes[..7].copy_from_slice(&self.uid_bytes[..7]);
-                u64::from_le_bytes(bytes) as u128
-            }
-            10 => {
-                let mut bytes = [0; 16];
-                bytes[..10].copy_from_slice(&self.uid_bytes[..10]);
-                u128::from_le_bytes(bytes)
-            }
-            _ => {
-                log::error!("Wrong bytes count!");
-                unreachable!() // i dont think that this case is reachable
-            }
-        }
+        let len = (self.size as usize).min(self.uid_bytes.len());
+        let mut bytes = [0; 16];
+        bytes[..len].copy_from_slice(&self.uid_bytes[..len]);
+        u128::from_le_bytes(bytes)
     }
 }
 
@@ -148,7 +135,7 @@ impl PICCCommand {
     pub const PICC_CMD_UL_WRITE: u8 = 0xA2; // Writes one 4 byte page to the PICC.
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum PCDVersion {
     Counterfeit = 0x12,
@@ -177,7 +164,7 @@ impl PCDVersion {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum PICCType {
     PiccTypeUnknown = 0xff,
@@ -212,7 +199,7 @@ impl PICCType {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PCDErrorCode {
     /// Error in communication
     Error,

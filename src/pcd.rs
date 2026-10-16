@@ -126,7 +126,7 @@ where
         self.write_reg(PCDRegister::CommandReg, val).await?;
 
         let start_time = (self.get_current_time)();
-        while (self.get_current_time)() - start_time < 500_000 {
+        while self.elapsed_us(start_time) < 500_000 {
             let val = self.read_reg(PCDRegister::CommandReg).await?;
             if val & (1 << 4) == 0 {
                 return Ok(());
@@ -149,17 +149,21 @@ where
         key: &[u8],
         uid: &Uid,
     ) -> Result<(), PCDErrorCode> {
-        if key.len() != 6 && key.len() != 0xA {
+        let size = uid.size as usize;
+        let (Ok(key), Some(uid_tail)) = (
+            <[u8; 6]>::try_from(key),
+            size.checked_sub(4)
+                .and_then(|start| uid.uid_bytes.get(start..size)),
+        ) else {
             return Err(PCDErrorCode::Invalid);
-        }
+        };
 
         let wait_irq = 0x10;
         let mut send_data = [0; 12];
         send_data[0] = cmd;
         send_data[1] = block_addr;
-        send_data[2..8].copy_from_slice(key);
-        send_data[8..12]
-            .copy_from_slice(&uid.uid_bytes[(uid.size as usize - 4)..(uid.size as usize)]);
+        send_data[2..8].copy_from_slice(&key);
+        send_data[8..12].copy_from_slice(uid_tail);
 
         self.pcd_communicate_with_picc(
             PCDCommand::MFAuthent,
@@ -182,17 +186,14 @@ where
         accept_timeout: bool,
     ) -> Result<(), PCDErrorCode> {
         let mut cmd_buff = [0; 18];
-        if send_len > 16 {
-            return Err(PCDErrorCode::Invalid);
-        }
+        let data = match send_data.get(..send_len as usize) {
+            Some(data) if send_len <= 16 => data,
+            _ => return Err(PCDErrorCode::Invalid),
+        };
 
-        cmd_buff[..send_len as usize].copy_from_slice(&send_data[..send_len as usize]);
-        self.pcd_calc_crc(
-            &send_data[..send_len as usize],
-            send_len,
-            &mut cmd_buff[send_len as usize..],
-        )
-        .await?;
+        cmd_buff[..data.len()].copy_from_slice(data);
+        self.pcd_calc_crc_single_buf(&mut cmd_buff, send_len, send_len as usize)
+            .await?;
 
         send_len += 2;
 
@@ -302,13 +303,13 @@ where
         rx_align: u8,
         check_crc: bool,
     ) -> Result<(), PCDErrorCode> {
-        let tx_last_bits = if let Some(ref valid_bits) = valid_bits {
-            **valid_bits
-        } else {
-            0
-        };
+        let tx_last_bits = valid_bits.as_ref().map_or(0, |bits| **bits);
+        // FIFO is 64 bytes, bit counts are 0..=7
+        if send_len as usize > send_data.len().min(64) || rx_align > 7 || tx_last_bits > 7 {
+            return Err(PCDErrorCode::Invalid);
+        }
 
-        let bit_framing = (rx_align << 4) + tx_last_bits;
+        let bit_framing = (rx_align << 4) | tx_last_bits;
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
@@ -335,7 +336,8 @@ where
                 break;
             }
 
-            if n & 0x01 != 0 || (self.get_current_time)() - start_time >= 36_000 {
+            // TimerIRq or 36ms software deadline (the PCD timer is set to 25ms in pcd_init)
+            if n & 0x01 != 0 || self.elapsed_us(start_time) >= 36_000 {
                 return Err(PCDErrorCode::Timeout);
             }
         }
@@ -348,7 +350,7 @@ where
         let mut _valid_bits = 0;
         if let Some(back_len) = back_len.as_mut() {
             let n = self.read_reg(PCDRegister::FIFOLevelReg).await?;
-            if n > **back_len {
+            if n > **back_len || n as usize > back_data.len() {
                 return Err(PCDErrorCode::NoRoom);
             }
 
@@ -463,25 +465,33 @@ where
         Ok(())
     }
 
+    /// Runs the CRC_A coprocessor over `data[..length]` and stores the 2 CRC bytes in `res[..2]`.
     pub async fn pcd_calc_crc(
         &mut self,
         data: &[u8],
         length: u8,
         res: &mut [u8],
     ) -> Result<(), PCDErrorCode> {
+        let (Some(data), Some(res)) = (data.get(..length as usize), res.get_mut(..2)) else {
+            return Err(PCDErrorCode::NoRoom);
+        };
+        if data.len() > 64 {
+            return Err(PCDErrorCode::Invalid);
+        }
+
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
 
         self.write_reg(PCDRegister::DivIrqReg, 0x04).await?;
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
-        self.write_reg_buff(PCDRegister::FIFODataReg, length as usize, data)
+        self.write_reg_buff(PCDRegister::FIFODataReg, data.len(), data)
             .await?;
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
             .await?;
 
         let start_time = (self.get_current_time)();
-        while (self.get_current_time)() - start_time < 89_000 {
+        while self.elapsed_us(start_time) < 89_000 {
             let n = self.read_reg(PCDRegister::DivIrqReg).await?;
             if n & 0x04 != 0 {
                 self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
@@ -496,37 +506,19 @@ where
         Err(PCDErrorCode::Timeout)
     }
 
-    /// This function is to prevent unnesecary clones
+    /// Like [`Self::pcd_calc_crc`], but reads `data[..length]` and writes the CRC to
+    /// `data[out_offset..out_offset + 2]` of the same buffer (`length <= out_offset`).
     pub async fn pcd_calc_crc_single_buf(
         &mut self,
         data: &mut [u8],
         length: u8,
         out_offset: usize,
     ) -> Result<(), PCDErrorCode> {
-        self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
-            .await?;
-
-        self.write_reg(PCDRegister::DivIrqReg, 0x04).await?;
-        self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
-        self.write_reg_buff(PCDRegister::FIFODataReg, length as usize, data)
-            .await?;
-
-        self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
-            .await?;
-
-        let start_time = (self.get_current_time)();
-        while (self.get_current_time)() - start_time < 89_000 {
-            let n = self.read_reg(PCDRegister::DivIrqReg).await?;
-            if n & 0x04 != 0 {
-                self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
-                    .await?;
-
-                data[out_offset] = self.read_reg(PCDRegister::CRCResultRegL).await?;
-                data[out_offset + 1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
-                return Ok(());
-            }
+        if length as usize > out_offset || out_offset > data.len() {
+            return Err(PCDErrorCode::NoRoom);
         }
 
-        Err(PCDErrorCode::Timeout)
+        let (src, dst) = data.split_at_mut(out_offset);
+        self.pcd_calc_crc(src, length, dst).await
     }
 }

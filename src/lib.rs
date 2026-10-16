@@ -9,6 +9,9 @@ pub mod mifare;
 pub mod pcd;
 pub mod picc;
 
+#[cfg(test)]
+mod tests;
+
 pub trait MfrcDriver {
     fn write_reg(&mut self, reg: u8, val: u8) -> impl Future<Output = Result<(), PCDErrorCode>>;
     fn write_reg_buff(
@@ -57,13 +60,19 @@ where
 
     #[cfg(not(feature = "embassy-time"))]
     pub async fn sleep(&self, time_ms: u64) {
+        // shortcut: busy-waits (blocks the executor), enable `embassy-time` for a real async sleep
         let start_time = (self.get_current_time)(); // microseconds
-        while (self.get_current_time)() - start_time < time_ms * 1_000 {}
+        while self.elapsed_us(start_time) < time_ms.saturating_mul(1_000) {}
     }
 
     #[cfg(feature = "embassy-time")]
     pub async fn sleep(&self, time_ms: u64) {
         embassy_time::Timer::after_millis(time_ms).await;
+    }
+
+    /// Microseconds since `start` (wrapping, so a clock wrap can't panic).
+    fn elapsed_us(&self, start: u64) -> u64 {
+        (self.get_current_time)().wrapping_sub(start)
     }
 
     pub async fn get_card(&mut self, size: UidSize) -> Result<Uid, PCDErrorCode> {

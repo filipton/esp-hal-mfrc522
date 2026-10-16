@@ -17,7 +17,7 @@ use esp_hal::{
     spi::master::Spi,
     timer::timg::TimerGroup,
 };
-use esp_hal_mfrc522::{consts::UidSize, debug::MFRC522Debug};
+use esp_hal_mfrc522::consts::UidSize;
 use log::{debug, error, info};
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -34,12 +34,6 @@ async fn main(_spawner: Spawner) {
 
     #[cfg(feature = "esp32s3")]
     log::set_max_level(log::LevelFilter::Trace);
-
-    // NOTE: test i2c initalization
-    let i2c = esp_hal::i2c::master::I2c::new(peripherals.I2C0, Default::default())
-        .unwrap()
-        .into_async();
-    let driver = esp_hal_mfrc522::drivers::I2CDriver::new(i2c, 0x69);
 
     let data_pin = Output::new(
         peripherals.GPIO10,

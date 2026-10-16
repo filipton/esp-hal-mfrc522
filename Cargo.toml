@@ -1,11 +1,13 @@
 [package]
 name = "esp-hal-mfrc522"
-version = "0.3.4"
+version = "0.3.5"
 authors = ["filipton <filipton12@gmail.com>"]
 edition = "2024"
 license = "MIT"
 description = "Simple mfrc522 library for esp-hal (can be used on any hal that implements embedded-hal-async)"
 repository = "https://github.com/filipton/esp-hal-mfrc522"
+# examples/ is a standalone firmware crate, not cargo examples
+autoexamples = false
 
 [lib]
 

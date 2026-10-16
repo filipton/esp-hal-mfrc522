@@ -1,5 +1,5 @@
 # esp-hal-MFRC522
-Non-blocking RFID library for esp-hal (maybe for other hal's in the future).
+Async, `no_std`, no-alloc MFRC522 RFID library for esp-hal (works with any HAL implementing `embedded-hal-async` SPI or I2C).
 This project is just "port" of [this Arduino Library](https://github.com/OSSLibraries/Arduino_MFRC522v2).
 
 [![crates.io](https://img.shields.io/crates/v/esp-hal-mfrc522.svg)](https://crates.io/crates/esp-hal-mfrc522)
@@ -10,7 +10,6 @@ This project is just "port" of [this Arduino Library](https://github.com/OSSLibr
 let dma_rx_buf = dma_rx_buffer!(512).expect("Dma rx buf failed");
 let dma_tx_buf = dma_tx_buffer!(512).expect("Dma tx buf failed");
 
-//let cs = Output::new(cs, Level::High);
 let spi = Spi::new(
     spi,
     esp_hal::spi::master::Config::default()
@@ -28,7 +27,6 @@ let spi = spi
 let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
 
 let driver = esp_hal_mfrc522::drivers::SpiDriver::new(dev);
-//esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
 let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(driver); // embassy-time feature is enabled,
                                                          // so no need to pass current_time
                                                          // function
@@ -47,9 +45,7 @@ loop {
         if let Ok(card) = card {
             log::info!("Card UID: {}", card.get_number());
 
-            // this function dumps card blocks using log::debug
-            // use mfrc522_esp_hal::debug::MFRC522Debug;
-            //
+            // dumps card blocks using log::debug
             //_ = mfrc522.debug_dump_card(&card).await;
         }
 

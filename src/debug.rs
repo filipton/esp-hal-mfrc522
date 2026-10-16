@@ -66,8 +66,8 @@ where
 
     pub async fn debug_dump_card_details(&mut self, uid: &Uid) -> Result<(), PCDErrorCode> {
         let mut dbg_line_buff: String<32> = String::new();
-        for i in 0..uid.size {
-            _ = dbg_line_buff.write_fmt(format_args!(" {:02X}", uid.uid_bytes[i as usize]));
+        for byte in uid.uid_bytes.iter().take(uid.size as usize) {
+            _ = dbg_line_buff.write_fmt(format_args!(" {byte:02X}"));
         }
 
         log::debug!("Card UID:{dbg_line_buff}");
@@ -88,7 +88,7 @@ async fn dump_mifare_classic<D: MfrcDriver>(
         PICCType::PiccTypeMifareMini => 5,
         PICCType::PiccTypeMifare1K => 16,
         PICCType::PiccTypeMifare4K => 40,
-        _ => unreachable!(),
+        _ => return Err(PCDErrorCode::Invalid),
     };
 
     log::debug!("Sector Block   0  1  2  3   4  5  6  7   8  9 10 11  12 13 14 15  AccessBits");
@@ -113,17 +113,12 @@ async fn dump_mifare_classic_sector<D: MfrcDriver>(
     let mut groups = [0; 4];
     let mut inverted_error = false;
 
-    let first_block;
-    let no_of_blocks;
-    if sector < 32 {
-        no_of_blocks = 4;
-        first_block = sector * no_of_blocks;
-    } else if sector < 40 {
-        no_of_blocks = 16;
-        first_block = 128 + (sector - 32) * no_of_blocks;
-    } else {
-        return Err(PCDErrorCode::Invalid);
-    }
+    // sectors 0..32 have 4 blocks, 32..40 (4K only) have 16
+    let (first_block, no_of_blocks) = match sector {
+        0..32 => (sector * 4, 4),
+        32..40 => (128 + (sector - 32) * 16, 16),
+        _ => return Err(PCDErrorCode::Invalid),
+    };
 
     let mut is_sector_trailer = true;
     let mut buff = [0; 18];
@@ -235,7 +230,7 @@ async fn dump_mifare_ultralight<D: MfrcDriver>(
 
             for index in 0..4 {
                 i = 4 * offset + index;
-                _ = dbg_line_buff.write_fmt(format_args!(" {i:02X}  "));
+                _ = dbg_line_buff.write_fmt(format_args!(" {:02X}  ", buff[i as usize]));
             }
         }
 

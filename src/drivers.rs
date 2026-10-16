@@ -38,7 +38,9 @@ where
         self.spi
             .transaction(&mut [
                 embedded_hal_async::spi::Operation::Write(&[reg << 1]),
-                embedded_hal_async::spi::Operation::Write(&values[..count]),
+                embedded_hal_async::spi::Operation::Write(
+                    values.get(..count).ok_or(PCDErrorCode::NoRoom)?,
+                ),
             ])
             .await
             .map_err(PCDErrorCode::from_spi_error)?;
@@ -69,6 +71,9 @@ where
         if count == 0 {
             return Ok(());
         }
+        if count > output_buff.len() {
+            return Err(PCDErrorCode::NoRoom);
+        }
 
         let addr = 0x80 | (reg << 1);
         let first_out_byte = output_buff[0];
@@ -84,7 +89,7 @@ where
             .map_err(PCDErrorCode::from_spi_error)?;
 
         if rx_align > 0 {
-            let mask = 0xFF << rx_align;
+            let mask = 0xFFu8 << (rx_align & 0x07);
             output_buff[0] = (first_out_byte & !mask) | (output_buff[0] & mask);
         }
 
@@ -136,7 +141,9 @@ where
                 self.address,
                 &mut [
                     embedded_hal_async::i2c::Operation::Write(&[reg]),
-                    embedded_hal_async::i2c::Operation::Write(&values[..count]),
+                    embedded_hal_async::i2c::Operation::Write(
+                        values.get(..count).ok_or(PCDErrorCode::NoRoom)?,
+                    ),
                 ],
             )
             .await
@@ -171,6 +178,9 @@ where
         if count == 0 {
             return Ok(());
         }
+        if count > output_buff.len() {
+            return Err(PCDErrorCode::NoRoom);
+        }
 
         let first_out_byte = output_buff[0];
         self.i2c
@@ -185,7 +195,7 @@ where
             .map_err(PCDErrorCode::from_i2c_error)?;
 
         if rx_align > 0 {
-            let mask = 0xFF << rx_align;
+            let mask = 0xFFu8 << (rx_align & 0x07);
             output_buff[0] = (first_out_byte & !mask) | (output_buff[0] & mask);
         }
 
