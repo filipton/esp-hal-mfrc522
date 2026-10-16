@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(type_alias_impl_trait)]
 
 use adv_shift_registers::wrappers::ShifterPin;
 use embassy_executor::Spawner;
@@ -13,18 +12,17 @@ use esp_hal::gpio::Pin;
 use esp_hal::spi::Mode;
 use esp_hal::time::Rate;
 use esp_hal::{
-    dma::{DmaRxBuf, DmaTxBuf},
-    dma_buffers,
+    dma_rx_buffer, dma_tx_buffer,
     gpio::{AnyPin, Output},
-    peripherals::DMA,
     spi::master::Spi,
     timer::timg::TimerGroup,
 };
-use esp_hal_embassy::main;
 use esp_hal_mfrc522::{consts::UidSize, debug::MFRC522Debug};
 use log::{debug, error, info};
 
-#[main]
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[esp_hal::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
@@ -32,7 +30,7 @@ async fn main(_spawner: Spawner) {
     //esp_println::logger::init_logger_from_env();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     #[cfg(feature = "esp32s3")]
     log::set_max_level(log::LevelFilter::Trace);
@@ -83,7 +81,7 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "esp32c3")]
     let mosi = peripherals.GPIO6.degrade();
 
-    _ = _spawner.spawn(rfid_task(
+    _spawner.spawn(rfid_task(
         miso,
         mosi,
         sck,
@@ -93,7 +91,7 @@ async fn main(_spawner: Spawner) {
         #[cfg(feature = "esp32c3")]
         peripherals.SPI2,
         peripherals.DMA_CH0,
-    ));
+    ).unwrap());
 
     loop {
         info!("main loop");
@@ -115,9 +113,8 @@ async fn rfid_task(
 
     dma: esp_hal::peripherals::DMA_CH0<'static>,
 ) {
-    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(512);
-    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("Dma tx buf failed");
-    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("Dma rx buf failed");
+    let dma_rx_buf = dma_rx_buffer!(512).expect("Dma rx buf failed");
+    let dma_tx_buf = dma_tx_buffer!(512).expect("Dma tx buf failed");
 
     //let cs = Output::new(cs, Level::High);
     let spi = Spi::new(

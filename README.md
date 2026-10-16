@@ -7,9 +7,8 @@ This project is just "port" of [this Arduino Library](https://github.com/OSSLibr
 
 ## Example
 ```rust
-let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(512);
-let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).expect("Dma tx buf failed");
-let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).expect("Dma rx buf failed");
+let dma_rx_buf = dma_rx_buffer!(512).expect("Dma rx buf failed");
+let dma_tx_buf = dma_tx_buffer!(512).expect("Dma tx buf failed");
 
 //let cs = Output::new(cs, Level::High);
 let spi = Spi::new(
