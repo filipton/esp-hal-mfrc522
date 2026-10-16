@@ -1,524 +1,324 @@
+//! Reader (PCD) control: init, antenna, power, authentication and the transceive core.
+
 use crate::{
-    MFRC522, MfrcDriver,
-    consts::{PCDCommand, PCDErrorCode, PCDRegister, PCDVersion, Uid},
+    AntennaGain, Error, Interface, Key, KeyType, Mfrc522, Uid, Version,
+    consts::{PCDCommand, PCDRegister, PICCCommand},
 };
-use heapless::String;
 
-/// assert return boolean (false)
-macro_rules! assert_rb {
-    ($expr:expr, $expected:expr) => {
-        if $expr != $expected {
-            return false;
+/// Register values written by [`Mfrc522::init`] (checked by [`Mfrc522::is_initialized`]).
+const INIT_REGS: [(u8, u8); 9] = [
+    (PCDRegister::TxModeReg, 0x00),
+    (PCDRegister::RxModeReg, 0x00),
+    (PCDRegister::ModWidthReg, 0x26),
+    // timer: 25 ms timeout (TPrescaler 0xA9 -> 40 kHz, reload 1000)
+    (PCDRegister::TModeReg, 0x80),
+    (PCDRegister::TPrescalerReg, 0xA9),
+    (PCDRegister::TReloadRegH, 0x03),
+    (PCDRegister::TReloadRegL, 0xE8),
+    (PCDRegister::TxASKReg, 0x40), // 100% ASK
+    (PCDRegister::ModeReg, 0x3D),  // CRC preset 0x6363
+];
+
+impl<I: Interface> Mfrc522<I> {
+    /// Soft-resets the chip, configures timer/modulation and turns the antenna on.
+    pub async fn init(&mut self) -> Result<(), Error> {
+        self.reset().await?;
+        for (reg, val) in INIT_REGS {
+            self.write_reg(reg, val).await?;
         }
-    };
-}
-
-impl<D> MFRC522<D>
-where
-    D: MfrcDriver,
-{
-    pub async fn pcd_init(&mut self) -> Result<(), PCDErrorCode> {
-        self.pcd_reset().await?;
-
-        self.write_reg(PCDRegister::TxModeReg, 0x00).await?;
-        self.write_reg(PCDRegister::RxModeReg, 0x00).await?;
-        self.write_reg(PCDRegister::ModWidthReg, 0x26).await?;
-
-        self.write_reg(PCDRegister::TModeReg, 0x80).await?;
-        self.write_reg(PCDRegister::TPrescalerReg, 0xA9).await?;
-        self.write_reg(PCDRegister::TReloadRegH, 0x03).await?;
-        self.write_reg(PCDRegister::TReloadRegL, 0xE8).await?;
-
-        self.write_reg(PCDRegister::TxASKReg, 0x40).await?;
-        self.write_reg(PCDRegister::ModeReg, 0x3D).await?;
-
-        self.pcd_antenna_on().await?;
-
-        self.sleep(4).await;
+        self.antenna_on().await?;
+        self.sleep_ms(4).await;
         Ok(())
     }
 
-    pub async fn pcd_is_init(&mut self) -> bool {
-        assert_rb!(self.read_reg(PCDRegister::TxModeReg).await, Ok(0x00));
-        assert_rb!(self.read_reg(PCDRegister::RxModeReg).await, Ok(0x00));
-        assert_rb!(self.read_reg(PCDRegister::ModWidthReg).await, Ok(0x26));
-
-        assert_rb!(self.read_reg(PCDRegister::TModeReg).await, Ok(0x80));
-        assert_rb!(self.read_reg(PCDRegister::TPrescalerReg).await, Ok(0xA9));
-        assert_rb!(self.read_reg(PCDRegister::TReloadRegH).await, Ok(0x03));
-        assert_rb!(self.read_reg(PCDRegister::TReloadRegL).await, Ok(0xE8));
-
-        assert_rb!(self.read_reg(PCDRegister::TxASKReg).await, Ok(0x40));
-        assert_rb!(self.read_reg(PCDRegister::ModeReg).await, Ok(0x3D));
-        true
+    /// Whether the chip still holds the configuration written by [`Self::init`] (detects a
+    /// module that lost power or never answered).
+    pub async fn is_initialized(&mut self) -> Result<bool, Error> {
+        for (reg, val) in INIT_REGS {
+            if self.read_reg(reg).await? != val {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
-    pub async fn pcd_reset(&mut self) -> Result<(), PCDErrorCode> {
-        // self.spi.flush().await.map_err(|_| PCDErrorCode::Unknown)?;
+    /// Soft reset; waits up to ~150 ms for the chip to wake up again.
+    pub async fn reset(&mut self) -> Result<(), Error> {
         self.write_reg(PCDRegister::CommandReg, PCDCommand::SoftReset)
             .await?;
 
-        // max 3 tries
         for _ in 0..3 {
-            let out = self.read_reg(PCDRegister::CommandReg).await;
-            if let Ok(out) = out {
-                let out = out & (1 << 4);
-                if out == 0 {
-                    break;
-                }
+            if let Ok(cmd) = self.read_reg(PCDRegister::CommandReg).await
+                && cmd & (1 << 4) == 0
+            {
+                break;
             }
-
-            self.sleep(50).await;
+            self.sleep_ms(50).await;
         }
-
         Ok(())
     }
 
-    pub async fn pcd_antenna_on(&mut self) -> Result<(), PCDErrorCode> {
+    pub async fn antenna_on(&mut self) -> Result<(), Error> {
         let val = self.read_reg(PCDRegister::TxControlReg).await?;
-        if (val & 0x03) != 0x03 {
+        if val & 0x03 != 0x03 {
             self.write_reg(PCDRegister::TxControlReg, val | 0x03)
                 .await?;
         }
-
         Ok(())
     }
 
-    pub async fn pcd_antenna_off(&mut self) -> Result<(), PCDErrorCode> {
-        self.pcd_clear_register_bit_mask(PCDRegister::TxControlReg, 0x03)
+    pub async fn antenna_off(&mut self) -> Result<(), Error> {
+        self.clear_bits(PCDRegister::TxControlReg, 0x03).await
+    }
+
+    pub async fn antenna_gain(&mut self) -> Result<AntennaGain, Error> {
+        let val = self.read_reg(PCDRegister::RFCfgReg).await?;
+        Ok(AntennaGain::from_bits(val))
+    }
+
+    pub async fn set_antenna_gain(&mut self, gain: AntennaGain) -> Result<(), Error> {
+        let val = self.read_reg(PCDRegister::RFCfgReg).await?;
+        self.write_reg(PCDRegister::RFCfgReg, (val & !0x70) | gain as u8)
             .await
     }
 
-    pub async fn pcd_get_antenna_gain(&mut self) -> Result<u8, PCDErrorCode> {
-        let res = self.read_reg(PCDRegister::RFCfgReg).await?;
-        Ok(res & (0x07 << 4))
+    pub async fn version(&mut self) -> Result<Version, Error> {
+        let byte = self.read_reg(PCDRegister::VersionReg).await?;
+        Ok(Version::from_byte(byte))
     }
 
-    pub async fn pcd_set_antenna_gain(&mut self, mask: u8) -> Result<(), PCDErrorCode> {
-        if self.pcd_get_antenna_gain().await? != mask {
-            self.pcd_clear_register_bit_mask(PCDRegister::RFCfgReg, 0x07 << 4)
-                .await?;
-
-            self.pcd_set_register_bit_mask(PCDRegister::RFCfgReg, mask & (0x07 << 4))
-                .await?;
-        }
-
-        Ok(())
+    /// Enters soft power-down (antenna and oscillator off).
+    pub async fn power_down(&mut self) -> Result<(), Error> {
+        self.set_bits(PCDRegister::CommandReg, 1 << 4).await
     }
 
-    pub async fn pcd_get_version(&mut self) -> Result<PCDVersion, PCDErrorCode> {
-        Ok(PCDVersion::from_byte(
-            self.read_reg(PCDRegister::VersionReg).await?,
-        ))
-    }
+    /// Leaves soft power-down; waits up to 500 ms for the oscillator.
+    pub async fn power_up(&mut self) -> Result<(), Error> {
+        self.clear_bits(PCDRegister::CommandReg, 1 << 4).await?;
 
-    pub async fn pcd_soft_power_down(&mut self) -> Result<(), PCDErrorCode> {
-        let mut val = self.read_reg(PCDRegister::CommandReg).await?;
-        val |= 1 << 4;
-        self.write_reg(PCDRegister::CommandReg, val).await?;
-
-        Ok(())
-    }
-
-    pub async fn pcd_soft_power_up(&mut self) -> Result<(), PCDErrorCode> {
-        let mut val = self.read_reg(PCDRegister::CommandReg).await?;
-        val &= !(1 << 4);
-        self.write_reg(PCDRegister::CommandReg, val).await?;
-
-        let start_time = (self.get_current_time)();
-        while self.elapsed_us(start_time) < 500_000 {
-            let val = self.read_reg(PCDRegister::CommandReg).await?;
-            if val & (1 << 4) == 0 {
+        let start = (self.now_us)();
+        while self.elapsed_us(start) < 500_000 {
+            if self.read_reg(PCDRegister::CommandReg).await? & (1 << 4) == 0 {
                 return Ok(());
             }
         }
-
-        Err(PCDErrorCode::Timeout)
+        Err(Error::Timeout)
     }
 
-    pub async fn pcd_stop_crypto1(&mut self) -> Result<(), PCDErrorCode> {
-        self.pcd_clear_register_bit_mask(PCDRegister::Status2Reg, 0x08)
-            .await
+    /// Ends the encrypted MIFARE Classic session started by [`Self::authenticate`].
+    pub async fn stop_crypto1(&mut self) -> Result<(), Error> {
+        self.clear_bits(PCDRegister::Status2Reg, 0x08).await
     }
 
-    /// Key - 6 bytes
-    pub async fn pcd_authenticate(
+    /// MIFARE Classic authentication of the sector containing `block`.
+    pub async fn authenticate(
         &mut self,
-        cmd: u8,
-        block_addr: u8,
-        key: &[u8],
+        key_type: KeyType,
+        block: u8,
+        key: &Key,
         uid: &Uid,
-    ) -> Result<(), PCDErrorCode> {
-        let size = uid.size as usize;
-        let (Ok(key), Some(uid_tail)) = (
-            <[u8; 6]>::try_from(key),
-            size.checked_sub(4)
-                .and_then(|start| uid.uid_bytes.get(start..size)),
-        ) else {
-            return Err(PCDErrorCode::Invalid);
+    ) -> Result<(), Error> {
+        let cmd = match key_type {
+            KeyType::A => PICCCommand::PICC_CMD_MF_AUTH_KEY_A,
+            KeyType::B => PICCCommand::PICC_CMD_MF_AUTH_KEY_B,
         };
+        // the card checks the last 4 UID bytes
+        let uid = uid.as_bytes();
+        let uid_tail = uid
+            .get(uid.len().saturating_sub(4)..)
+            .filter(|t| t.len() == 4)
+            .ok_or(Error::InvalidArgument)?;
 
-        let wait_irq = 0x10;
-        let mut send_data = [0; 12];
-        send_data[0] = cmd;
-        send_data[1] = block_addr;
-        send_data[2..8].copy_from_slice(&key);
-        send_data[8..12].copy_from_slice(uid_tail);
+        let mut send = [0; 12];
+        send[0] = cmd;
+        send[1] = block;
+        send[2..8].copy_from_slice(&key.0);
+        send[8..12].copy_from_slice(uid_tail);
 
-        self.pcd_communicate_with_picc(
-            PCDCommand::MFAuthent,
-            wait_irq,
-            &send_data,
-            12,
-            &mut [],
-            None,
-            None,
-            0,
-            false,
-        )
-        .await
-    }
-
-    pub async fn pcd_mifare_transceive(
-        &mut self,
-        send_data: &[u8],
-        mut send_len: u8,
-        accept_timeout: bool,
-    ) -> Result<(), PCDErrorCode> {
-        let mut cmd_buff = [0; 18];
-        let data = match send_data.get(..send_len as usize) {
-            Some(data) if send_len <= 16 => data,
-            _ => return Err(PCDErrorCode::Invalid),
-        };
-
-        cmd_buff[..data.len()].copy_from_slice(data);
-        self.pcd_calc_crc_single_buf(&mut cmd_buff, send_len, send_len as usize)
+        // wait for IdleIRq
+        self.communicate(PCDCommand::MFAuthent, 0x10, &send, 0, None, 0, false)
             .await?;
-
-        send_len += 2;
-
-        let wait_irq = 0x30;
-        let mut cmd_buff_size = 18;
-        let mut valid_bits = 0;
-
-        let res = self
-            .pcd_communicate_with_picc(
-                PCDCommand::Transceive,
-                wait_irq,
-                &cmd_buff.clone(),
-                send_len,
-                &mut cmd_buff,
-                Some(&mut cmd_buff_size),
-                Some(&mut valid_bits),
-                0,
-                false,
-            )
-            .await;
-
-        match res {
-            Err(PCDErrorCode::Timeout) => {
-                if accept_timeout {
-                    return Ok(());
-                }
-            }
-            Err(e) => return Err(e),
-            Ok(_) => {}
-        }
-
-        if cmd_buff_size != 1 || valid_bits != 4 {
-            return Err(PCDErrorCode::Error);
-        }
-
-        if cmd_buff[0] != 0xA {
-            // MIFARE_Misc::MF_ACK type
-            return Err(PCDErrorCode::MifareNack);
-        }
-
         Ok(())
     }
 
-    pub async fn pcd_ntag216_auth(&mut self, password: [u8; 4]) -> Result<[u8; 2], PCDErrorCode> {
-        let mut cmd_buff = [0; 18];
-        cmd_buff[0] = 0x1B;
-        cmd_buff[1..5].copy_from_slice(&password);
+    /// NTAG21x `PWD_AUTH`; returns the 2-byte PACK.
+    pub async fn ntag_pwd_auth(&mut self, password: [u8; 4]) -> Result<[u8; 2], Error> {
+        let mut send = [0; 7];
+        send[0] = 0x1B;
+        send[1..5].copy_from_slice(&password);
+        let crc = self.calc_crc(&send[..5]).await?;
+        send[5..].copy_from_slice(&crc);
 
-        self.pcd_calc_crc_single_buf(&mut cmd_buff, 5, 5).await?;
-
-        let wait_irq = 0x30;
-        let mut valid_bits = 0;
-        let mut rx_length = 5;
-
-        self.pcd_communicate_with_picc(
-            PCDCommand::Transceive,
-            wait_irq,
-            &cmd_buff.clone(),
-            7,
-            &mut cmd_buff,
-            Some(&mut rx_length),
-            Some(&mut valid_bits),
-            0,
-            false,
-        )
-        .await?;
-
-        Ok([cmd_buff[0], cmd_buff[1]])
+        let mut back = [0; 5];
+        let (len, _) = self.transceive(&send, 0, Some(&mut back), 0, false).await?;
+        if len < 2 {
+            return Err(Error::Communication);
+        }
+        Ok([back[0], back[1]])
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn pcd_transceive_data(
+    /// Sends `send` (≤ 16 bytes) plus CRC and expects a 4-bit MIFARE ACK.
+    pub(crate) async fn mifare_transceive(
         &mut self,
-        send_data: &[u8],
-        send_len: u8,
-        back_data: &mut [u8],
-        back_len: Option<&mut u8>,
-        valid_bits: Option<&mut u8>,
+        send: &[u8],
+        accept_timeout: bool,
+    ) -> Result<(), Error> {
+        let mut buf = [0; 18];
+        let n = send.len();
+        if n > 16 {
+            return Err(Error::InvalidArgument);
+        }
+        buf[..n].copy_from_slice(send);
+        let crc = self.calc_crc(send).await?;
+        buf[n..n + 2].copy_from_slice(&crc);
+
+        let mut back = [0; 18];
+        let res = self
+            .transceive(&buf[..n + 2], 0, Some(&mut back), 0, false)
+            .await;
+        let (len, valid_bits) = match res {
+            Err(Error::Timeout) if accept_timeout => return Ok(()),
+            res => res?,
+        };
+
+        if len != 1 || valid_bits != 4 {
+            return Err(Error::Communication);
+        }
+        if back[0] != 0x0A {
+            return Err(Error::Nack);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn transceive(
+        &mut self,
+        send: &[u8],
+        tx_last_bits: u8,
+        back: Option<&mut [u8]>,
         rx_align: u8,
         check_crc: bool,
-    ) -> Result<(), PCDErrorCode> {
-        let wait_irq = 0x30;
-        self.pcd_communicate_with_picc(
+    ) -> Result<(usize, u8), Error> {
+        // wait for RxIRq or IdleIRq
+        self.communicate(
             PCDCommand::Transceive,
-            wait_irq,
-            send_data,
-            send_len,
-            back_data,
-            back_len,
-            valid_bits,
+            0x30,
+            send,
+            tx_last_bits,
+            back,
             rx_align,
             check_crc,
         )
         .await
     }
 
+    /// Runs `cmd` with `send` in the FIFO. Received bytes go to `back` (its length is the
+    /// capacity). Returns `(received bytes, valid bits in the last byte)`.
     #[allow(clippy::too_many_arguments)]
-    pub async fn pcd_communicate_with_picc(
+    async fn communicate(
         &mut self,
         cmd: u8,
         wait_irq: u8,
-        send_data: &[u8],
-        send_len: u8,
-        back_data: &mut [u8],
-        mut back_len: Option<&mut u8>,
-        valid_bits: Option<&mut u8>,
+        send: &[u8],
+        tx_last_bits: u8,
+        mut back: Option<&mut [u8]>,
         rx_align: u8,
         check_crc: bool,
-    ) -> Result<(), PCDErrorCode> {
-        let tx_last_bits = valid_bits.as_ref().map_or(0, |bits| **bits);
+    ) -> Result<(usize, u8), Error> {
         // FIFO is 64 bytes, bit counts are 0..=7
-        if send_len as usize > send_data.len().min(64) || rx_align > 7 || tx_last_bits > 7 {
-            return Err(PCDErrorCode::Invalid);
+        if send.len() > 64 || rx_align > 7 || tx_last_bits > 7 {
+            return Err(Error::InvalidArgument);
         }
-
-        let bit_framing = (rx_align << 4) | tx_last_bits;
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
-
         self.write_reg(PCDRegister::ComIrqReg, 0x7F).await?;
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
-        self.write_reg_buff(PCDRegister::FIFODataReg, send_len as usize, send_data)
+        self.write_regs(PCDRegister::FIFODataReg, send).await?;
+        self.write_reg(PCDRegister::BitFramingReg, (rx_align << 4) | tx_last_bits)
             .await?;
-
-        self.write_reg(PCDRegister::BitFramingReg, bit_framing)
-            .await?;
-
         self.write_reg(PCDRegister::CommandReg, cmd).await?;
-
         if cmd == PCDCommand::Transceive {
-            self.pcd_set_register_bit_mask(PCDRegister::BitFramingReg, 0x80)
-                .await?;
+            self.set_bits(PCDRegister::BitFramingReg, 0x80).await?; // StartSend
         }
 
-        let start_time = (self.get_current_time)();
+        let start = (self.now_us)();
         loop {
-            let n = self.read_reg(PCDRegister::ComIrqReg).await?;
-            if n & wait_irq != 0 {
+            let irq = self.read_reg(PCDRegister::ComIrqReg).await?;
+            if irq & wait_irq != 0 {
                 break;
             }
-
-            // TimerIRq or 36ms software deadline (the PCD timer is set to 25ms in pcd_init)
-            if n & 0x01 != 0 || self.elapsed_us(start_time) >= 36_000 {
-                return Err(PCDErrorCode::Timeout);
+            // TimerIRq or 36 ms software deadline (the PCD timer is set to 25 ms in init)
+            if irq & 0x01 != 0 || self.elapsed_us(start) >= 36_000 {
+                return Err(Error::Timeout);
             }
         }
 
-        let error_reg_value = self.read_reg(PCDRegister::ErrorReg).await?;
-        if error_reg_value & 0x13 != 0 {
-            return Err(PCDErrorCode::Error);
+        let error = self.read_reg(PCDRegister::ErrorReg).await?;
+        if error & 0x13 != 0 {
+            // BufferOvfl, ParityErr, ProtocolErr
+            return Err(Error::Communication);
         }
 
-        let mut _valid_bits = 0;
-        if let Some(back_len) = back_len.as_mut() {
-            let n = self.read_reg(PCDRegister::FIFOLevelReg).await?;
-            if n > **back_len || n as usize > back_data.len() {
-                return Err(PCDErrorCode::NoRoom);
+        let (len, valid_bits) = match back.as_deref_mut() {
+            Some(back) => {
+                let n = self.read_reg(PCDRegister::FIFOLevelReg).await? as usize;
+                let dst = back.get_mut(..n).ok_or(Error::BufferTooSmall)?;
+                self.read_regs(PCDRegister::FIFODataReg, dst, rx_align)
+                    .await?;
+                let valid_bits = self.read_reg(PCDRegister::ControlReg).await? & 0x07;
+                (n, valid_bits)
             }
+            None => (0, 0),
+        };
 
-            **back_len = n;
-            self.read_reg_buff(PCDRegister::FIFODataReg, n as usize, back_data, rx_align)
-                .await?;
-
-            _valid_bits = self.read_reg(PCDRegister::ControlReg).await? & 0x07;
-            if let Some(valid_bits) = valid_bits {
-                *valid_bits = _valid_bits;
-            }
+        // the received bits are already in `back` (anticollision needs them)
+        if error & 0x08 != 0 {
+            return Err(Error::Collision);
         }
 
-        if error_reg_value & 0x08 != 0 {
-            return Err(PCDErrorCode::Collision);
-        }
-
-        if let Some(back_len) = back_len
+        if let Some(back) = back
             && check_crc
         {
-            if *back_len == 1 && _valid_bits == 4 {
-                return Err(PCDErrorCode::MifareNack);
+            if len == 1 && valid_bits == 4 {
+                return Err(Error::Nack);
+            }
+            if len < 2 || valid_bits != 0 {
+                return Err(Error::Crc);
             }
 
-            if *back_len < 2 || _valid_bits != 0 {
-                return Err(PCDErrorCode::CrcWrong);
-            }
-
-            let mut control_buff = [0; 2];
-            self.pcd_calc_crc(back_data, *back_len - 2, &mut control_buff)
-                .await?;
-
-            if (back_data[*back_len as usize - 2] != control_buff[0])
-                || (back_data[*back_len as usize - 1] != control_buff[1])
-            {
-                return Err(PCDErrorCode::CrcWrong);
+            let (data, crc) = back[..len].split_at(len - 2);
+            if self.calc_crc(data).await?[..] != *crc {
+                return Err(Error::Crc);
             }
         }
 
-        Ok(())
+        Ok((len, valid_bits))
     }
 
-    /// Now it prints data to console, TODO: change this
-    /// Always returns false (for now)
-    pub async fn pcd_selftest(&mut self) -> Result<bool, PCDErrorCode> {
-        log::debug!("Running PCD_Selftest!\n");
-
-        self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
-        self.write_reg_buff(PCDRegister::FIFODataReg, 25, &[0; 25])
-            .await?;
-
-        self.write_reg(PCDRegister::CommandReg, PCDCommand::Mem)
-            .await?;
-
-        self.write_reg(PCDRegister::AutoTestReg, 0x09).await?;
-        self.write_reg(PCDRegister::FIFODataReg, 0x00).await?;
-        self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
-            .await?;
-
-        for _ in 0..0xFF {
-            let n = self.read_reg(PCDRegister::FIFOLevelReg).await?;
-            if n >= 64 {
-                break;
-            }
-        }
-
-        self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
-            .await?;
-
-        let mut res = [0; 64];
-        self.read_reg_buff(PCDRegister::FIFODataReg, 64, &mut res, 0)
-            .await?;
-
-        self.write_reg(PCDRegister::AutoTestReg, 0x00).await?;
-
-        let mut str: String<128> = String::new();
-
-        for (i, resi) in res.iter().enumerate() {
-            if i % 8 == 0 && !str.is_empty() {
-                log::debug!("{}", str);
-                str.clear();
-            }
-
-            _ = core::fmt::write(&mut str, format_args!("{:#04x} ", resi));
-        }
-        log::debug!("{}", str);
-
-        log::debug!("PCD_Selftest Done!\n");
-        self.pcd_init().await?;
-        Ok(false)
-    }
-
-    pub async fn pcd_clear_register_bit_mask(
-        &mut self,
-        reg: u8,
-        mask: u8,
-    ) -> Result<(), PCDErrorCode> {
-        let tmp = self.read_reg(reg).await?;
-        self.write_reg(reg, tmp & (!mask)).await?;
-
-        Ok(())
-    }
-
-    pub async fn pcd_set_register_bit_mask(
-        &mut self,
-        reg: u8,
-        mask: u8,
-    ) -> Result<(), PCDErrorCode> {
-        let tmp = self.read_reg(reg).await?;
-        self.write_reg(reg, tmp | mask).await?;
-
-        Ok(())
-    }
-
-    /// Runs the CRC_A coprocessor over `data[..length]` and stores the 2 CRC bytes in `res[..2]`.
-    pub async fn pcd_calc_crc(
-        &mut self,
-        data: &[u8],
-        length: u8,
-        res: &mut [u8],
-    ) -> Result<(), PCDErrorCode> {
-        let (Some(data), Some(res)) = (data.get(..length as usize), res.get_mut(..2)) else {
-            return Err(PCDErrorCode::NoRoom);
-        };
+    /// CRC_A of `data` (≤ 64 bytes) computed by the chip's coprocessor.
+    pub(crate) async fn calc_crc(&mut self, data: &[u8]) -> Result<[u8; 2], Error> {
         if data.len() > 64 {
-            return Err(PCDErrorCode::Invalid);
+            return Err(Error::InvalidArgument);
         }
 
         self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
             .await?;
-
         self.write_reg(PCDRegister::DivIrqReg, 0x04).await?;
         self.write_reg(PCDRegister::FIFOLevelReg, 0x80).await?;
-        self.write_reg_buff(PCDRegister::FIFODataReg, data.len(), data)
-            .await?;
-
+        self.write_regs(PCDRegister::FIFODataReg, data).await?;
         self.write_reg(PCDRegister::CommandReg, PCDCommand::CalcCRC)
             .await?;
 
-        let start_time = (self.get_current_time)();
-        while self.elapsed_us(start_time) < 89_000 {
-            let n = self.read_reg(PCDRegister::DivIrqReg).await?;
-            if n & 0x04 != 0 {
+        let start = (self.now_us)();
+        while self.elapsed_us(start) < 89_000 {
+            if self.read_reg(PCDRegister::DivIrqReg).await? & 0x04 != 0 {
                 self.write_reg(PCDRegister::CommandReg, PCDCommand::Idle)
                     .await?;
-
-                res[0] = self.read_reg(PCDRegister::CRCResultRegL).await?;
-                res[1] = self.read_reg(PCDRegister::CRCResultRegH).await?;
-                return Ok(());
+                let lo = self.read_reg(PCDRegister::CRCResultRegL).await?;
+                let hi = self.read_reg(PCDRegister::CRCResultRegH).await?;
+                return Ok([lo, hi]);
             }
         }
-
-        Err(PCDErrorCode::Timeout)
-    }
-
-    /// Like [`Self::pcd_calc_crc`], but reads `data[..length]` and writes the CRC to
-    /// `data[out_offset..out_offset + 2]` of the same buffer (`length <= out_offset`).
-    pub async fn pcd_calc_crc_single_buf(
-        &mut self,
-        data: &mut [u8],
-        length: u8,
-        out_offset: usize,
-    ) -> Result<(), PCDErrorCode> {
-        if length as usize > out_offset || out_offset > data.len() {
-            return Err(PCDErrorCode::NoRoom);
-        }
-
-        let (src, dst) = data.split_at_mut(out_offset);
-        self.pcd_calc_crc(src, length, dst).await
+        Err(Error::Timeout)
     }
 }

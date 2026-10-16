@@ -1,10 +1,10 @@
 [package]
 name = "esp-hal-mfrc522"
-version = "0.3.5"
+version = "0.4.0"
 authors = ["filipton <filipton12@gmail.com>"]
 edition = "2024"
 license = "MIT"
-description = "Simple mfrc522 library for esp-hal (can be used on any hal that implements embedded-hal-async)"
+description = "Async, no_std, allocation-free MFRC522 RFID driver for esp-hal (any embedded-hal-async SPI or I2C bus)"
 repository = "https://github.com/filipton/esp-hal-mfrc522"
 # examples/ is a standalone firmware crate, not cargo examples
 autoexamples = false

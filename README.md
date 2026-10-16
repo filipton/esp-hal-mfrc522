@@ -6,57 +6,40 @@ This project is just "port" of [this Arduino Library](https://github.com/OSSLibr
 [![MIT license](https://img.shields.io/github/license/mashape/apistatus.svg)]()
 
 ## Example
-```rust
-let dma_rx_buf = dma_rx_buffer!(512).expect("Dma rx buf failed");
-let dma_tx_buf = dma_tx_buffer!(512).expect("Dma tx buf failed");
+```rust,no_run
+use esp_hal_mfrc522::{Error, Interface, Key, KeyType, Mfrc522};
 
-let spi = Spi::new(
-    spi,
-    esp_hal::spi::master::Config::default()
-        .with_frequency(Rate::from_khz(400))
-        .with_mode(Mode::_0),
-)
-.unwrap();
+// `interface` is e.g. `SpiInterface::new(spi_device)` (any embedded-hal-async `SpiDevice`) or
+// `I2cInterface::new(i2c, DEFAULT_I2C_ADDRESS)`.
+async fn read_cards(interface: impl Interface, now_us: fn() -> u64) -> Result<(), Error> {
+    // with the `embassy-time` feature: `Mfrc522::new(interface)`
+    let mut rfid = Mfrc522::with_clock(interface, now_us);
 
-let spi = spi.with_sck(sck).with_miso(miso).with_mosi(mosi);
-let spi = spi
-    .with_dma(dma)
-    .with_buffers(dma_rx_buf, dma_tx_buf)
-    .into_async();
+    rfid.init().await?;
+    log::info!("version: {:?}", rfid.version().await?);
 
-let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
+    loop {
+        if rfid.is_new_card_present().await? {
+            let uid = rfid.select().await?;
+            log::info!("UID: {:02X?} ({:?})", uid.as_bytes(), uid.card_type());
 
-let driver = esp_hal_mfrc522::drivers::SpiDriver::new(dev);
-let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(driver); // embassy-time feature is enabled,
-                                                         // so no need to pass current_time
-                                                         // function
+            rfid.authenticate(KeyType::A, 4, &Key::DEFAULT, &uid).await?;
+            let block = rfid.read_block(4).await?;
+            log::info!("block 4: {block:02X?}");
+            // rfid.dump_card(&uid).await?; // logs the whole card with log::debug
 
-_ = mfrc522.pcd_init().await;
-_ = mfrc522.pcd_selftest().await;
-log::debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
-
-if !mfrc522.pcd_is_init().await {
-    log::error!("MFRC522 init failed! Try to power cycle to module!");
-}
-
-loop {
-    if mfrc522.picc_is_new_card_present().await.is_ok() {
-        let card = mfrc522.get_card(UidSize::Four).await;
-        if let Ok(card) = card {
-            log::info!("Card UID: {}", card.get_number());
-
-            // dumps card blocks using log::debug
-            //_ = mfrc522.debug_dump_card(&card).await;
+            rfid.halt().await?;
+            rfid.stop_crypto1().await?;
         }
-
-        _ = mfrc522.picc_halta().await;
+        // wait a bit here (e.g. `embassy_time::Timer::after_millis(1).await`)
     }
-
-    Timer::after(Duration::from_millis(1)).await;
 }
 ```
 
+Full firmware example (esp32s3 / esp32c3): [`examples/`](examples/).
+Upgrading from 0.3: see [MIGRATING.md](MIGRATING.md).
+
 ## TODO
-- [ ] Change some functions to be more "rust-like"
-- [ ] Documentation in code
+- [x] Change some functions to be more "rust-like"
+- [x] Documentation in code
 - [x] Crates.io publish

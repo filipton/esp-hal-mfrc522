@@ -17,8 +17,8 @@ use esp_hal::{
     spi::master::Spi,
     timer::timg::TimerGroup,
 };
-use esp_hal_mfrc522::consts::UidSize;
-use log::{debug, error, info};
+use esp_hal_mfrc522::{Key, KeyType, Mfrc522, SpiInterface};
+use log::{error, info};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -127,36 +127,31 @@ async fn rfid_task(
 
     let dev = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
 
-    let driver = esp_hal_mfrc522::drivers::SpiDriver::new(dev);
-    //esp_hal_mfrc522::MFRC522::new(spi, cs, || esp_hal::time::current_time().ticks());
-    let mut mfrc522 = esp_hal_mfrc522::MFRC522::new(driver); // embassy-time feature is enabled,
-                                                             // so no need to pass current_time
-                                                             // function
+    let mut rfid = Mfrc522::new(SpiInterface::new(dev)); // `embassy-time` feature
 
-    _ = mfrc522.pcd_init().await;
-    _ = mfrc522.pcd_selftest().await;
-    debug!("PCD ver: {:?}", mfrc522.pcd_get_version().await);
-
-    if !mfrc522.pcd_is_init().await {
-        error!("MFRC522 init failed! Try to power cycle to module!");
+    if let Err(e) = rfid.init().await {
+        error!("MFRC522 init failed: {e}");
+    }
+    info!("MFRC522 version: {:?}", rfid.version().await);
+    if !matches!(rfid.is_initialized().await, Ok(true)) {
+        error!("MFRC522 not responding! Try to power cycle the module!");
     }
 
     loop {
-        if mfrc522.picc_is_new_card_present().await.is_ok() {
-            let card = mfrc522.get_card(UidSize::Four).await;
-            if let Ok(card) = card {
-                info!("Card UID: {}", card.get_number());
+        if let Ok(true) = rfid.is_new_card_present().await {
+            if let Ok(uid) = rfid.select().await {
+                info!("Card UID: {:02X?} ({:?})", uid.as_bytes(), uid.card_type());
 
-                let mut buff = [0; 18];
-                let mut byte_count = 18;
-                _ = mfrc522.mifare_read(0, &mut buff, &mut byte_count).await;
+                // block 0 (manufacturer block) with the factory key
+                match rfid.authenticate(KeyType::A, 0, &Key::DEFAULT, &uid).await {
+                    Ok(()) => info!("Block 0: {:02X?}", rfid.read_block(0).await),
+                    Err(e) => error!("Auth failed: {e}"),
+                }
+                //_ = rfid.dump_card(&uid).await;
 
-                log::info!("{:02X?}", buff);
-
-                //_ = mfrc522.debug_dump_card(&card).await;
+                _ = rfid.halt().await;
+                _ = rfid.stop_crypto1().await;
             }
-
-            _ = mfrc522.picc_halta().await;
         }
 
         Timer::after(Duration::from_millis(1)).await;
